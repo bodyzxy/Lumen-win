@@ -1,0 +1,309 @@
+/* 视觉语言：像一张安静的相纸。
+   浅色、单色调，只用墨色的深浅表达层级；彩色只出现在它真正代表颜色的地方。（Theme.swift） */
+
+:root {
+  --text: rgb(29, 29, 31);
+  --text2: rgb(110, 110, 115);
+  --text3: rgb(163, 163, 168);
+  --line: rgba(0, 0, 0, 0.075);
+  --line-strong: rgba(0, 0, 0, 0.14);
+  --wash: rgba(0, 0, 0, 0.035);
+  --wash-strong: rgba(0, 0, 0, 0.06);
+  /* 画布：带一点暖意的浅灰，像博物馆的墙 */
+  --paper: rgb(237, 236, 233);
+  --surface: rgb(250, 250, 249);
+  /* 侧栏和工具栏：对应 macOS 的侧栏材质与统一工具栏 */
+  --sidebar: rgb(241, 240, 237);
+  --toolbar: rgb(246, 245, 243);
+  --tint: rgb(92, 92, 97);
+
+  --font: 'Inter Variable', -apple-system, 'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
+  --mono: 'Cascadia Mono', 'SF Mono', ui-monospace, Consolas, 'Microsoft YaHei UI', monospace;
+  --rounded: 'Segoe UI Variable Display', 'SF Pro Rounded', var(--font);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--paper);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'cv11', 'ss01';
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: default;
+  outline: none;
+}
+
+button:disabled {
+  pointer-events: none;
+}
+
+input {
+  font: inherit;
+  color: inherit;
+  outline: none;
+}
+
+::selection {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.mono {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 英文小标签（字距拉开，作为排版点缀） */
+.micro {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 1.6px;
+  color: var(--text3);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.hairline-h {
+  height: 0.5px;
+  background: var(--line);
+  flex: none;
+}
+
+.hairline-v {
+  width: 0.5px;
+  background: var(--line);
+  flex: none;
+}
+
+/* MARK: 玻璃质感：材质 + 顶部高光描边 + 外侧发丝线 + 柔和投影 */
+
+.glass {
+  position: relative;
+  background: rgba(255, 255, 255, 0.62);
+  backdrop-filter: blur(24px) saturate(1.6);
+  -webkit-backdrop-filter: blur(24px) saturate(1.6);
+  box-shadow:
+    inset 0 0.8px 0 rgba(255, 255, 255, 0.95),
+    inset 0 -0.8px 0 rgba(255, 255, 255, 0.08),
+    0 0 0 0.5px rgba(0, 0, 0, 0.07),
+    0 3px 14px rgba(0, 0, 0, 0.08);
+  transition: box-shadow 0.2s ease-out, background-color 0.2s ease-out;
+}
+
+.glass.pressed {
+  background: rgba(255, 255, 255, 0.4);
+  box-shadow:
+    inset 0 0.8px 0 rgba(255, 255, 255, 0.95),
+    0 0 0 0.5px rgba(0, 0, 0, 0.07),
+    0 1px 4px rgba(0, 0, 0, 0.04);
+}
+
+.glass.prominent {
+  background:
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 50%),
+    var(--text);
+  color: white;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow:
+    inset 0 0.8px 0 rgba(255, 255, 255, 0.28),
+    0 0 0 0.5px rgba(0, 0, 0, 0.2),
+    0 3px 14px rgba(0, 0, 0, 0.08);
+}
+
+.glass.prominent.pressed {
+  background:
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 50%),
+    rgba(29, 29, 31, 0.82);
+}
+
+/* 胶囊形玻璃按钮 */
+.glass-button {
+  height: 28px;
+  padding: 0 13px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
+/* 纯文字按钮（链接样式） */
+.text-link {
+  font-size: 11.5px;
+  color: var(--text2);
+  text-decoration: underline transparent;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  white-space: nowrap;
+}
+
+.text-link:hover {
+  color: var(--text);
+  text-decoration-color: var(--text3);
+}
+
+.text-link:active {
+  opacity: 0.6;
+}
+
+/* 滚动区域：不显示滚动条（和 Mac 的 showsIndicators: false 一致），但仍可滚动 */
+.scroll-y {
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  overscroll-behavior: contain;
+}
+
+.scroll-y::-webkit-scrollbar {
+  display: none;
+}
+
+.scroll-x {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.scroll-x::-webkit-scrollbar {
+  display: none;
+}
+
+/* 弹出菜单 */
+.menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 200px;
+  padding: 5px;
+  border-radius: 10px;
+  background: rgba(248, 248, 247, 0.86);
+  backdrop-filter: blur(30px) saturate(1.8);
+  -webkit-backdrop-filter: blur(30px) saturate(1.8);
+  box-shadow:
+    inset 0 0.8px 0 rgba(255, 255, 255, 0.9),
+    0 0 0 0.5px rgba(0, 0, 0, 0.12),
+    0 10px 32px rgba(0, 0, 0, 0.16);
+  font-size: 13px;
+  color: var(--text);
+  transform-origin: top left;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 24px;
+  padding: 0 10px 0 24px;
+  border-radius: 5px;
+  text-align: left;
+  white-space: nowrap;
+  position: relative;
+}
+
+.menu-item .check {
+  position: absolute;
+  left: 7px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.menu-item .shortcut {
+  margin-left: auto;
+  padding-left: 24px;
+  color: var(--text3);
+  font-size: 12px;
+}
+
+.menu-item:hover:not(.disabled) {
+  background: var(--text);
+  color: white;
+}
+
+.menu-item:hover:not(.disabled) .shortcut {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.menu-item.disabled {
+  color: var(--text3);
+}
+
+.menu-item.destructive:hover:not(.disabled) {
+  background: rgb(200, 60, 50);
+}
+
+.menu-sep {
+  height: 0.5px;
+  margin: 5px 8px;
+  background: var(--line-strong);
+}
+
+.menu-header {
+  padding: 6px 10px 3px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text3);
+}
+
+/* 帮助卡片 / 弹出面板 */
+.popover {
+  position: fixed;
+  z-index: 900;
+  background: rgba(252, 252, 251, 0.94);
+  backdrop-filter: blur(30px) saturate(1.6);
+  -webkit-backdrop-filter: blur(30px) saturate(1.6);
+  border-radius: 12px;
+  box-shadow:
+    inset 0 0.8px 0 rgba(255, 255, 255, 0.9),
+    0 0 0 0.5px rgba(0, 0, 0, 0.12),
+    0 12px 40px rgba(0, 0, 0, 0.16);
+}
+
+/* 自带的工具提示（替代 Mac 的 .help） */
+.tooltip {
+  position: fixed;
+  z-index: 1100;
+  max-width: 280px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(250, 250, 249, 0.96);
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.14), 0 4px 14px rgba(0, 0, 0, 0.12);
+  font-size: 11.5px;
+  color: var(--text);
+  pointer-events: none;
+  white-space: normal;
+  line-height: 1.35;
+}
+
+textarea,
+input[type='text'] {
+  user-select: text;
+  -webkit-user-select: text;
+}

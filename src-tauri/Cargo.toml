@@ -1,0 +1,31 @@
+[package]
+name = "lumen"
+version = "1.0.0"
+description = "A lightweight app for editing and color-grading your photos"
+authors = ["bodyzxy"]
+license = "MIT"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "lumen_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+percent-encoding = "2"
+# 只用来解码 WebView 不认识的格式（TIFF 等）和写 16 位 TIFF
+image = { version = "0.25", default-features = false, features = ["tiff", "png", "jpeg", "bmp", "gif", "webp", "ico"] }
+
+[profile.release]
+# 安装包尽量小
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
