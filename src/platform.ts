@@ -15,13 +15,21 @@ export interface PickedFile {
 
 const IMAGE_EXT = ['jpg', 'jpeg', 'png', 'webp', 'avif', 'bmp', 'gif', 'tif', 'tiff', 'jfif', 'ico']
 
+/** 相机 RAW（解码在 Rust 端，见 src-tauri/src/raw.rs，两边列表保持一致） */
+export const RAW_EXT = [
+  'arw', 'srf', 'sr2', 'cr2', 'cr3', 'crw', 'nef', 'nrw', 'raf', 'orf', 'rw2', 'rwl', 'dng', 'pef', 'srw', '3fr', 'fff', 'iiq', 'mef', 'mos',
+  'mrw', 'erf', 'kdc', 'dcr', 'x3f',
+]
+
 export const baseName = (p: string) => {
   const f = p.split(/[\\/]/).pop() ?? p
   const i = f.lastIndexOf('.')
   return i > 0 ? f.slice(0, i) : f
 }
 export const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p
-export const isImagePath = (p: string) => IMAGE_EXT.includes((p.split('.').pop() ?? '').toLowerCase())
+const extOf = (p: string) => (p.split('.').pop() ?? '').toLowerCase()
+export const isRawName = (p: string) => RAW_EXT.includes(extOf(p))
+export const isImagePath = (p: string) => IMAGE_EXT.includes(extOf(p)) || isRawName(p)
 
 async function core() {
   return await import('@tauri-apps/api/core')
@@ -57,7 +65,11 @@ export async function pickImages(multiple: boolean, title: string): Promise<Pick
   const res = await open({
     multiple,
     title,
-    filters: [{ name: L('图片', 'Images'), extensions: IMAGE_EXT }],
+    filters: [
+      { name: L('照片（含 RAW）', 'Photos (incl. RAW)'), extensions: [...IMAGE_EXT, ...RAW_EXT] },
+      { name: L('相机 RAW', 'Camera RAW'), extensions: RAW_EXT },
+      { name: L('普通图片', 'Standard images'), extensions: IMAGE_EXT },
+    ],
   })
   if (!res) return []
   const paths = Array.isArray(res) ? res : [res]
@@ -134,6 +146,39 @@ export async function decodeImage(f: PickedFile, bytes?: Uint8Array): Promise<Im
   const h = dv.getUint32(4, true)
   const px = new Uint8ClampedArray(raw.buffer, raw.byteOffset + 8, w * h * 4)
   return await createImageBitmap(new ImageData(px, w, h))
+}
+
+export interface RawImage {
+  width: number
+  height: number
+  /** RGB 交错的半精度浮点（线性 sRGB） */
+  data: Uint16Array
+}
+
+/**
+ * 解码相机 RAW：Rust 端冲洗一次，按要的几个尺寸（长边上限，0 = 原尺寸）一起返回。
+ * full 是原图尺寸（已按拍摄方向转正）。
+ */
+export async function decodeRaw(f: PickedFile, sizes: number[]): Promise<{ full: { width: number; height: number }; images: RawImage[] }> {
+  if (!isTauri || !f.path) throw new Error(L('RAW 需要在桌面版里打开', 'RAW files need the desktop app'))
+  const { invoke } = await core()
+  const buf = await invoke<ArrayBuffer>('raw_decode', { path: f.path, sizes: sizes.map((n) => Math.max(0, Math.round(n))) })
+  const dv = new DataView(buf)
+  const full = { width: dv.getUint32(0, true), height: dv.getUint32(4, true) }
+  const count = dv.getUint32(8, true)
+  let off = 12
+  const images: RawImage[] = []
+  for (let i = 0; i < count; i++) {
+    const width = dv.getUint32(off, true)
+    const height = dv.getUint32(off + 4, true)
+    off += 8
+    const n = width * height * 3
+    // 按需拷贝一份，保证 2 字节对齐
+    const data = new Uint16Array(buf.slice(off, off + n * 2))
+    off += n * 2
+    images.push({ width, height, data })
+  }
+  return { full, images }
 }
 
 /** 拖放：Tauri 里用窗口事件（拿到磁盘路径），浏览器里用 HTML5 拖放 */

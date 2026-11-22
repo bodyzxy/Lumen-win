@@ -213,6 +213,18 @@ export class Renderer {
     return { tex, width: image.width, height: image.height }
   }
 
+  /** 上传相机 RAW 冲洗出来的线性数据（RGB 半精度浮点，从上到下存放，可以超过 1.0） */
+  uploadHalfRGB(data: Uint16Array, w: number, h: number): Source {
+    const gl = this.gl
+    const tex = gl.createTexture()!
+    gl.bindTexture(gl.TEXTURE_2D, tex)
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 2)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB16F, w, h, 0, gl.RGB, gl.HALF_FLOAT, data)
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4)
+    this.setLinear(gl.TEXTURE_2D)
+    return { tex, width: w, height: h }
+  }
+
   /** 上传已经是线性浮点值的数据（导出 LUT 时的网格） */
   uploadLinearFloat(data: Float32Array, w: number, h: number): Source {
     const gl = this.gl

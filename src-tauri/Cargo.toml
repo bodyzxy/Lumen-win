@@ -5,7 +5,7 @@ description = "A lightweight app for editing and color-grading your photos"
 authors = ["bodyzxy"]
 license = "MIT"
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.88"
 
 [lib]
 name = "lumen_lib"
@@ -19,6 +19,9 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 percent-encoding = "2"
+# 相机 RAW 解码（纯 Rust：佳能、尼康、索尼、富士、奥林巴斯、松下、宾得、DNG 等）
+rawler = "0.8"
+half = "2"
 # 只用来解码 WebView 不认识的格式（TIFF 等）和写 16 位 TIFF
 image = { version = "0.25", default-features = false, features = ["tiff", "png", "jpeg", "bmp", "gif", "webp", "ico"] }
 

@@ -293,11 +293,10 @@ function PhotoView({ id, edited, original, width, height }: { id: string; edited
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 显影：从发白、失焦、无色，慢慢浮现出影像
-  const lastDevelop = useRef(developToken)
+  // 显影：从发白、失焦、无色，慢慢浮现出影像（新照片的第一帧出来时播放一次）
   useLayoutEffect(() => {
-    if (developToken === lastDevelop.current) return
-    lastDevelop.current = developToken
+    if (doc.developID !== id) return
+    doc.developID = null
     const el = inner.current
     if (!el) return
     const curve = bezier(0.16, 0.8, 0.24, 1)
@@ -312,6 +311,7 @@ function PhotoView({ id, edited, original, width, height }: { id: string; edited
       })
     }
     el.animate(frames, { duration: 1600, easing: 'linear' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [developToken])
 
   // 扫光：套用风格时一道光扫过照片
@@ -755,7 +755,7 @@ function EmptyStage({ hover, error }: { hover: boolean; error: string | null }) 
           <div style={{ fontSize: 19, fontWeight: 300 }}>{hover ? L('松开以打开', 'Release to open') : L('将照片拖到这里', 'Drop photos here')}</div>
         </FocusSwap>
         <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: 1.4, color: 'var(--text3)' }}>
-          {L('JPG · PNG · WEBP · TIFF · AVIF　可一次打开多张', 'JPG · PNG · WEBP · TIFF · AVIF — open several at once')}
+          {L('JPG · PNG · WEBP · TIFF · 相机 RAW　可一次打开多张', 'JPG · PNG · WEBP · TIFF · Camera RAW — open several at once')}
         </div>
         {error && <div style={{ fontSize: 11, color: 'rgb(190,60,50)', maxWidth: 360, textAlign: 'center' }}>{error}</div>}
       </div>

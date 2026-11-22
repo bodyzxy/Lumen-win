@@ -111,7 +111,8 @@ export function FocusSwap({
     copy[copy.length - 1] = { ...copy[copy.length - 1], node: children }
     setItems(copy)
   } else if (!items.some((i) => i.key === swapKey && !i.leaving)) {
-    setItems([...items.map((i) => ({ ...i, leaving: true })), { key: swapKey, node: children, leaving: false }])
+    // 切回一个还在淡出的内容时，先去掉它的旧副本，避免重复的 key
+    setItems([...items.filter((i) => i.key !== swapKey).map((i) => ({ ...i, leaving: true })), { key: swapKey, node: children, leaving: false }])
   }
 
   return (

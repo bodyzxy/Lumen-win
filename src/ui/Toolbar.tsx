@@ -13,6 +13,7 @@ export function Toolbar() {
   const hasImage = useDoc((d) => d.hasImage)
   const fileName = useDoc((d) => d.fileName)
   const size = useDoc((d) => d.imageSize)
+  const isRaw = useDoc((d) => d.activeIsRaw)
   const showSidebar = useDoc((d) => d.showSidebar)
   const moreRef = useRef<HTMLButtonElement>(null)
 
@@ -48,7 +49,7 @@ export function Toolbar() {
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
             <span style={{ fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap', maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis' }}>{hasImage ? fileName : 'Lumen'}</span>
             <span className="mono" style={{ fontSize: 10, color: 'var(--text3)', whiteSpace: 'nowrap' }}>
-              {hasImage ? `${size.width} × ${size.height} · sRGB` : L('光调', 'Light & Tone')}
+              {hasImage ? `${size.width} × ${size.height} · ${isRaw ? 'RAW' : 'sRGB'}` : L('光调', 'Light & Tone')}
             </span>
           </div>
         </FocusSwap>

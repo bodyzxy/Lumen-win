@@ -60,7 +60,7 @@ Push this folder to a GitHub repository. `.github/workflows/build-windows.yml` b
 | | Mac | Windows |
 |---|---|---|
 | Rendering | Core Image + Metal | WebGL 2, same formulas per pixel |
-| Open | JPG · PNG · HEIC · TIFF · RAW | JPG · PNG · WebP · AVIF · TIFF · BMP |
+| Open | JPG · PNG · HEIC · TIFF · RAW | JPG · PNG · WebP · AVIF · TIFF · BMP · camera RAW (Sony, Canon, Nikon, Fujifilm, Panasonic, Olympus, Pentax, DNG… decoded in Rust with [rawler](https://github.com/dnglab/dnglab); CR3 support depends on the camera) |
 | Export | JPEG · HEIC · PNG · 16-bit TIFF | JPEG · WebP · PNG · 16-bit TIFF |
 | Color space | Display P3 | sRGB |
 | Shortcuts | ⌘ | Ctrl (fine-tune a slider with Alt or Shift) |
@@ -141,7 +141,7 @@ npm run package    # 打包安装程序
 | | Mac | Windows |
 |---|---|---|
 | 渲染 | Core Image + Metal | WebGL 2，逐像素使用同样的公式 |
-| 打开 | JPG · PNG · HEIC · TIFF · RAW | JPG · PNG · WebP · AVIF · TIFF · BMP |
+| 打开 | JPG · PNG · HEIC · TIFF · RAW | JPG · PNG · WebP · AVIF · TIFF · BMP · 相机 RAW（索尼、佳能、尼康、富士、松下、奥林巴斯、宾得、DNG 等，Rust 端用 [rawler](https://github.com/dnglab/dnglab) 解码；CR3 视机型而定） |
 | 导出 | JPEG · HEIC · PNG · 16 位 TIFF | JPEG · WebP · PNG · 16 位 TIFF |
 | 色彩空间 | Display P3 | sRGB |
 | 快捷键 | ⌘ | Ctrl（滑杆微调用 Alt 或 Shift） |

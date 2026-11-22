@@ -59,6 +59,8 @@ class PhotoSession {
   detailSource: Source | null = null
   detailSize = { w: 0, h: 0 }
   detailLoading: Promise<void> | null = null
+  /** 相机 RAW：图像数据由 Rust 端冲洗成线性浮点，不经过浏览器解码 */
+  raw = false
 
   constructor(
     public file: P.PickedFile,
@@ -112,6 +114,8 @@ export class EditDocument {
   sweepToken = 0
   /** 新照片第一帧出来时 +1，画布据此播放“显影” */
   developToken = 0
+  /** 等待播放“显影”的照片（第一帧出来时设置，画布播放后清空） */
+  developID: string | null = null
   compareMode: CompareMode = 'off'
   splitPosition = 0.5
   showOriginal = false
@@ -172,6 +176,9 @@ export class EditDocument {
   get hasImage() {
     return this.active != null
   }
+  get activeIsRaw() {
+    return this.active?.raw ?? false
+  }
   get fileName() {
     return this.active?.name ?? L('未命名', 'Untitled')
   }
@@ -203,7 +210,17 @@ export class EditDocument {
     this.isLoading = true
     this.emit()
     const loaded: PhotoSession[] = []
+    let rawFailed = false
     for (const f of files) {
+      if (P.isRawName(f.name)) {
+        try {
+          loaded.push(await this.openRaw(f))
+        } catch (e) {
+          console.error(e)
+          rawFailed = true
+        }
+        continue
+      }
       try {
         const bytes = await P.readBytes(f)
         const full = await P.decodeImage(f, bytes)
@@ -225,7 +242,13 @@ export class EditDocument {
     this.isLoading = false
     const first = loaded[0]
     if (!first) {
-      this.showToast(L('打不开这张图片', "Couldn't open this image"))
+      this.showToast(
+        rawFailed
+          ? P.isTauri
+            ? L('这个 RAW 文件打不开（相机型号可能还不支持）', "Couldn't open this RAW file (the camera may not be supported yet)")
+            : L('RAW 需要在桌面版里打开', 'RAW files need the desktop app')
+          : L('打不开这张图片', "Couldn't open this image"),
+      )
       this.emit()
       return
     }
@@ -237,6 +260,43 @@ export class EditDocument {
     this.activate(first, true)
     // 上一张照片有调整的话，询问是否沿用
     if (previous && !stateIsDefault(previous.state)) this.offerApply(previous)
+  }
+
+  /** 打开一张 RAW：Rust 端冲洗一次，同时拿到预览（2200）和缩略图源（280）两种尺寸 */
+  private async openRaw(f: P.PickedFile): Promise<PhotoSession> {
+    const r = this.renderer!
+    const { full, images } = await P.decodeRaw(f, [PREVIEW_SIDE, THUMB_SOURCE_SIDE])
+    const [pv, th] = images
+    const preview = r.uploadHalfRGB(pv.data, pv.width, pv.height)
+    const thumbSource = r.uploadHalfRGB(th.data, th.width, th.height)
+    // “原图”就是不加任何调整的冲洗结果（左右对比、按住看原图、白平衡吸管都用它）
+    const neutral = defaultState()
+    const original = r.renderBitmap(preview, neutral, { refWidth: pv.width, refHeight: pv.height, originX: 0, originY: 0, outWidth: pv.width, outHeight: pv.height })
+    const s = new PhotoSession(f, new Uint8Array(0), full.width, full.height, preview, original, thumbSource, { w: th.width, h: th.height })
+    s.raw = true
+    const k = Math.min(1, 160 / Math.max(th.width, th.height))
+    s.thumbnail = r.renderBitmap(thumbSource, neutral, {
+      refWidth: th.width, refHeight: th.height, originX: 0, originY: 0,
+      outWidth: Math.max(1, Math.round(th.width * k)), outHeight: Math.max(1, Math.round(th.height * k)),
+    })
+    return s
+  }
+
+  /** 按需要的长边上限，把照片（普通图片或 RAW）上传成 GPU 源图；放大看细节和导出时用 */
+  private async loadSource(s: PhotoSession, maxSide: number): Promise<{ src: Source; w: number; h: number }> {
+    const r = this.renderer!
+    if (s.raw) {
+      // 原图放得下就要原尺寸（0），否则让 Rust 端先缩小，传过来的数据也更少
+      const { images } = await P.decodeRaw(s.file, [Math.max(s.width, s.height) > maxSide ? maxSide : 0])
+      const im = images[0]
+      return { src: r.uploadHalfRGB(im.data, im.width, im.height), w: im.width, h: im.height }
+    }
+    const full = await P.decodeImage(s.file, s.bytes)
+    const bmp = Math.max(full.width, full.height) > maxSide ? await downscale(full, maxSide) : full
+    if (bmp !== full) full.close()
+    const out = { src: r.upload(bmp), w: bmp.width, h: bmp.height }
+    bmp.close()
+    return out
   }
 
   // MARK: - 切换照片
@@ -504,7 +564,10 @@ export class EditDocument {
       this.previewImage = bmp
       if (old && old !== bmp && !this.sessions.some((x) => x.rendered === old)) old.close()
       this.histogram = hist
-      if (isNew) this.developToken++
+      if (isNew) {
+        this.developID = s.id
+        this.developToken++
+      }
     } catch (e) {
       console.error(e)
     }
@@ -590,13 +653,9 @@ export class EditDocument {
       if (!s.detailSource) {
         if (!s.detailLoading) {
           s.detailLoading = (async () => {
-            const full = await P.decodeImage(s.file, s.bytes)
-            const maxSide = Math.min(6000, r.maxTextureSize)
-            const bmp = await downscale(full, maxSide)
-            full.close()
-            s.detailSource = r.upload(bmp)
-            s.detailSize = { w: bmp.width, h: bmp.height }
-            bmp.close()
+            const { src, w, h } = await this.loadSource(s, Math.min(6000, r.maxTextureSize))
+            s.detailSource = src
+            s.detailSize = { w, h }
           })()
         }
         await s.detailLoading
@@ -820,12 +879,21 @@ export class EditDocument {
   }
 
   async chooseMatchReference(id: string) {
-    const f = await P.pickFile(['jpg', 'jpeg', 'png', 'webp', 'avif', 'bmp', 'tif', 'tiff'], L('选择一张参考照片，当前照片的色调会向它靠拢', "Choose a reference photo — this photo's tones will move toward it"))
+    const f = await P.pickFile(['jpg', 'jpeg', 'png', 'webp', 'avif', 'bmp', 'tif', 'tiff', ...P.RAW_EXT], L('选择一张参考照片，当前照片的色调会向它靠拢', "Choose a reference photo — this photo's tones will move toward it"))
     if (!f || !this.previewImage) return
     try {
-      const ref = await P.decodeImage(f)
-      const small = await downscale(ref, 512)
-      ref.close()
+      let small: ImageBitmap
+      if (P.isRawName(f.name)) {
+        const { images } = await P.decodeRaw(f, [512])
+        const im = images[0]
+        const src = this.renderer!.uploadHalfRGB(im.data, im.width, im.height)
+        small = this.renderer!.renderBitmap(src, defaultState(), { refWidth: im.width, refHeight: im.height, originX: 0, originY: 0, outWidth: im.width, outHeight: im.height })
+        this.renderer!.dispose(src)
+      } else {
+        const ref = await P.decodeImage(f)
+        small = await downscale(ref, 512)
+        ref.close()
+      }
       const refStats = colorStatsOf(small)
       small.close()
       const srcStats = colorStatsOf(this.previewImage)
@@ -921,16 +989,8 @@ export class EditDocument {
     // 让“正在导出”先显示出来
     await new Promise((res) => setTimeout(res, 60))
     try {
-      let full = await P.decodeImage(s.file, s.bytes)
       const limit = Math.min(maxSide ?? Infinity, r.maxTextureSize)
-      if (Math.max(full.width, full.height) > limit) {
-        const d = await downscale(full, limit)
-        full.close()
-        full = d
-      }
-      const W = full.width, H = full.height
-      const src = r.upload(full)
-      full.close()
+      const { src, w: W, h: H } = await this.loadSource(s, limit)
       const bits = format === 'TIFF' ? 16 : 8
       const out = bits === 8 ? new Uint8ClampedArray(W * H * 4) : new Uint16Array(W * H * 4)
       // 分块渲染，每块多留一圈边，显存占用小、大图也不会失败
