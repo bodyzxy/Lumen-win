@@ -26,9 +26,9 @@ jobs:
 
       - run: npm ci
 
-      - name: Build lumen-mcp
+      - name: Build lumen_mcp
         working-directory: src-tauri
-        run: cargo build --release --bin lumen-mcp
+        run: cargo build --release --bin lumen_mcp
 
       - name: Build installer
         uses: tauri-apps/tauri-action@v0
@@ -46,4 +46,4 @@ jobs:
           path: |
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/msi/*.msi
-            src-tauri/target/release/lumen-mcp.exe
+            src-tauri/target/release/lumen_mcp.exe

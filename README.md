@@ -164,18 +164,18 @@ npm run package    # 打包安装程序
 | \\ | 左右对比 |
 | Esc | 取消吸管 |
 
-### Live MCP Automation (`lumen-mcp.exe`)
+### Live MCP Automation (`lumen_mcp.exe`)
 
-Lumen Windows includes a built-in **Model Context Protocol (MCP)** stdio server (`lumen-mcp.exe`) so AI assistants (Cursor, Claude Desktop, Claude Code, Codex, Antigravity) can control the live Lumen window in real time over localhost TCP IPC (`~/.lumen/lumen-win-ipc.json`).
+Lumen Windows includes a built-in **Model Context Protocol (MCP)** stdio server (`lumen_mcp.exe`) so AI assistants (Cursor, Claude Desktop, Claude Code, Codex, Antigravity) can control the live Lumen window in real time over localhost TCP IPC (`~/.lumen/lumen-win-ipc.json`).
 
 #### Build
 
 ```powershell
 cd src-tauri
-cargo build --release --bin lumen --bin lumen-mcp
+cargo build --release --bin lumen --bin lumen_mcp
 ```
 
-Both `lumen.exe` and `lumen-mcp.exe` are produced in `src-tauri/target/release/`.
+Both `lumen.exe` and `lumen_mcp.exe` are produced in `src-tauri/target/release/`.
 
 #### Configure in MCP Client
 
@@ -183,7 +183,7 @@ Both `lumen.exe` and `lumen-mcp.exe` are produced in `src-tauri/target/release/`
 {
   "mcpServers": {
     "lumen": {
-      "command": "C:\\path\\to\\Lumen\\lumen-mcp.exe"
+      "command": "C:\\path\\to\\Lumen\\lumen_mcp.exe"
     }
   }
 }
