@@ -164,34 +164,42 @@ npm run package    # 打包安装程序
 | \\ | 左右对比 |
 | Esc | 取消吸管 |
 
-### Live MCP Automation (`lumen_mcp.exe`)
+### MCP 实时自动化控制（`lumen_mcp.exe`）
 
-Lumen Windows includes a built-in **Model Context Protocol (MCP)** stdio server (`lumen_mcp.exe`) so AI assistants (Cursor, Claude Desktop, Claude Code, Codex, Antigravity) can control the live Lumen window in real time over localhost TCP IPC (`~/.lumen/lumen-win-ipc.json`).
+Lumen Windows 内置了标准的 **Model Context Protocol (MCP)** 本地 Stdio 服务端（`lumen_mcp.exe`），让 **Cursor、Claude Desktop、Claude Code、Codex、Antigravity** 等 AI 助手可以直接控制你电脑上正在运行的 Lumen 窗口并实时渲染修图效果。
 
-#### Build
+* **为什么安装包里会带一个 `lumen_mcp.exe`？**
+  Lumen 是纯本地桌面修图软件（所有 WebGL 调色渲染都在本地 `lumen.exe` 中完成，没有云端服务器），因此需要一个本地轻量桥接程序作为 AI 客户端与 `lumen.exe` 之间的“传话筒”。随安装包一起安装后，**无需额外安装 Node.js / Python 或从网上下载依赖**；AI 调用时若 `lumen.exe` 尚未启动，`lumen_mcp.exe` 也会自动将其拉起。
 
-```powershell
-cd src-tauri
-cargo build --release --bin lumen --bin lumen_mcp
-```
+#### 1. 获取 `lumen_mcp.exe` 路径
 
-Both `lumen.exe` and `lumen_mcp.exe` are produced in `src-tauri/target/release/`.
+* **通过安装包安装**：安装完成后，`lumen_mcp.exe` 与主程序位于同一安装目录：
+  * NSIS 安装包（`*-setup.exe`，默认当前用户安装）：`%LOCALAPPDATA%\Lumen\lumen_mcp.exe`（即 `C:\Users\<你的用户名>\AppData\Local\Lumen\lumen_mcp.exe`）
+  * MSI 安装包：`C:\Program Files\Lumen\lumen_mcp.exe`
+* **自行源码编译**：
+  ```powershell
+  cd src-tauri
+  cargo build --release --bin lumen --bin lumen_mcp
+  ```
+  编译产物均位于 `src-tauri/target/release/`。
 
-#### Configure in MCP Client
+#### 2. 在 MCP 客户端中配置
+
+在 Cursor / Claude Desktop / Codex / Antigravity 的 MCP 配置文件中加入（以默认 NSIS 安装路径为例，请将 `<用户名>` 替换为你的 Windows 用户名）：
 
 ```json
 {
   "mcpServers": {
     "lumen": {
-      "command": "C:\\path\\to\\Lumen\\lumen_mcp.exe"
+      "command": "C:\\Users\\<用户名>\\AppData\\Local\\Lumen\\lumen_mcp.exe"
     }
   }
 }
 ```
 
-#### Available Tools (21)
+#### 3. 支持的 MCP 工具（共 21 个）
 
-- **Sessions**: `open_photos`, `list_sessions`, `switch_session`, `close_session`
-- **Adjustments & Layers**: `get_edit_state`, `set_basic_adjustments`, `reset_adjustments`, `add_layer`, `update_layer`, `layer_action`, `apply_preset`, `sync_adjustments`, `undo`, `redo`
-- **View & Analysis**: `set_view`, `get_image_analysis`, `sample_color`, `auto_white_balance`
-- **Render & Export**: `render_preview`, `export_photo`, `export_lut`
+- **会话管理**：`open_photos`、`list_sessions`、`switch_session`、`close_session`
+- **调色与图层**：`get_edit_state`、`set_basic_adjustments`、`reset_adjustments`、`add_layer`、`update_layer`、`layer_action`、`apply_preset`、`sync_adjustments`、`undo`、`redo`
+- **视图与分析**：`set_view`、`get_image_analysis`、`sample_color`、`auto_white_balance`
+- **预览与导出**：`render_preview`、`export_photo`、`export_lut`
