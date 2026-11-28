@@ -4,7 +4,7 @@ import { CM, curveTable, curveValue, gray, muted } from '../../engine/colormath'
 import { L } from '../../i18n'
 import { doc, useDoc } from '../../model/doc'
 import {
-  BasicSettings, BrightnessContrastParams, CurvePoint, CurvesParams, defaultLevelsChannel, ExposureParams,
+  BasicSettings, BrightnessContrastParams, cropIsIdentity, CurvePoint, CurvesParams, defaultLevelsChannel, ExposureParams,
   identityCurve, LevelsChannel, LevelsParams, VibranceParams,
 } from '../../model/types'
 import { BareIcon, GlassButton, HelpBadge, Hint, histPath, MicroLabel, Pager, ScrubRow, TextLink, useAnimatedArray } from '../kit'
@@ -25,7 +25,7 @@ export function BasicPanel({ basic }: { basic: BasicSettings }) {
     </div>
   )
   return (
-    <Pager tabs={[L('光影', 'Light'), L('色彩', 'Color'), L('质感', 'Texture'), L('效果', 'Effects'), L('校准', 'Calibrate')]} selection={tab} onSelect={(t) => doc.setActiveBasicTab(t)}>
+    <Pager tabs={[L('光影', 'Light'), L('色彩', 'Color'), L('质感', 'Texture'), L('效果', 'Effects'), L('校准', 'Calibrate'), L('裁剪', 'Crop')]} selection={tab} onSelect={(t) => doc.setActiveBasicTab(t)}>
       {(page) => {
         switch (page) {
           case 0:
@@ -79,7 +79,7 @@ export function BasicPanel({ basic }: { basic: BasicSettings }) {
                 {row(L('颗粒大小', 'Grain Size'), 'grainSize', [0, 100], 'basic.grainSize', { defaultValue: 25 })}
               </div>
             )
-          default:
+          case 4:
             return (
               <div>
                 {row(L('阴影色调', 'Shadow Tint'), 'shadowTint', [-100, 100], 'calib.shadowTint', { hint: Hint.tint })}
@@ -94,6 +94,8 @@ export function BasicPanel({ basic }: { basic: BasicSettings }) {
                 {row(L('饱和度', 'Saturation'), 'blueSaturation', [-100, 100], 'calib.saturation', { hint: [gray(0.8), muted(240, 0.6)] })}
               </div>
             )
+          default:
+            return <CropPanel />
         }
       }}
     </Pager>
@@ -443,3 +445,56 @@ export function VibrancePanel({ params, set }: { params: VibranceParams; set: (p
   )
 }
 
+
+function CropPanel() {
+  const crop = useDoc((d) => d.state.crop)
+  const preview = useDoc((d) => d.previewImage)
+  const imageSize = useDoc((d) => d.imageSize)
+  const ratios: [string, number | null][] = [
+    [L('自由', 'Free'), null],
+    ['1:1', 1],
+    ['4:5', 4 / 5],
+    ['3:2', 3 / 2],
+    ['16:9', 16 / 9],
+  ]
+  const applyAspect = (targetRatio: number | null) => {
+    if (!targetRatio) {
+      doc.setCrop({ x: 0, y: 0, width: 1, height: 1 })
+      return
+    }
+    const imgW = Math.max(1, preview?.width ?? imageSize.width)
+    const imgH = Math.max(1, preview?.height ?? imageSize.height)
+    const currentRatio = imgW / imgH
+    let w = 1, h = 1
+    if (targetRatio > currentRatio) h = currentRatio / targetRatio
+    else w = targetRatio / currentRatio
+    doc.setCrop({ x: (1 - w) / 2, y: (1 - h) / 2, width: w, height: h })
+  }
+  return (
+    <div>
+      <div style={{ display: 'flex', padding: '12px 18px 0 18px' }}>
+        <MicroLabel text="Transform" />
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 18px' }}>
+        <BareIcon icon="rotate.left" size={30} onClick={() => doc.setCrop({ quarterTurns: (crop.quarterTurns + 3) % 4 })} help={L('逆时针旋转 90°', 'Rotate 90° CCW')} />
+        <BareIcon icon="rotate.right" size={30} onClick={() => doc.setCrop({ quarterTurns: (crop.quarterTurns + 1) % 4 })} help={L('顺时针旋转 90°', 'Rotate 90° CW')} />
+        <BareIcon icon="flip.h" size={30} active={crop.flipH} onClick={() => doc.setCrop({ flipH: !crop.flipH })} help={L('水平翻转', 'Flip Horizontal')} />
+        <BareIcon icon="flip.v" size={30} active={crop.flipV} onClick={() => doc.setCrop({ flipV: !crop.flipV })} help={L('垂直翻转', 'Flip Vertical')} />
+        <span style={{ flex: 1 }} />
+        <GlassButton disabled={cropIsIdentity(crop)} onClick={() => doc.resetCrop()}>{L('重置', 'Reset')}</GlassButton>
+      </div>
+      <ScrubRow title={L('水平拉直', 'Straighten')} value={crop.straighten} onChange={(v) => doc.setCrop({ straighten: v })} range={[-45, 45]} defaultValue={0} decimals={1} suffix="°" />
+      <div style={{ display: 'flex', padding: '12px 18px 0 18px' }}>
+        <MicroLabel text="Aspect Ratio" />
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '6px 18px' }}>
+        {ratios.map(([label, r]) => (
+          <GlassButton key={label} onClick={() => applyAspect(r)}>{label}</GlassButton>
+        ))}
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 18px' }}>
+        <GlassButton prominent onClick={() => doc.setActiveBasicTab(0)}>{L('完成裁剪', 'Done')}</GlassButton>
+      </div>
+    </div>
+  )
+}

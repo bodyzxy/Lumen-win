@@ -2,7 +2,7 @@ import { ReactNode, useRef } from 'react'
 import { spring } from '../anim'
 import { L } from '../i18n'
 import { doc, useDoc } from '../model/doc'
-import { AdjustmentLayer, kindEnglish, LayerParams, resetLayerParams } from '../model/types'
+import { AdjustmentLayer, blendModes, blendModeTitle, kindEnglish, LayerParams, resetLayerParams } from '../model/types'
 import { Icon, kindSymbol } from './icons'
 import { BareIcon, HelpBadge, HistogramPanel, NoteText, ScrubRow } from './kit'
 import { FocusSwap } from './motion'
@@ -108,6 +108,21 @@ function LayerInspector({ layer }: { layer: AdjustmentLayer }) {
             ], 'right')
           }
         />
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 18px 2px 18px' }}>
+        <span style={{ fontSize: 12, color: 'var(--text2)' }}>{L('混合', 'Blend')}</span>
+        <select
+          value={layer.blendMode}
+          onChange={(e) => update((l) => ({ ...l, blendMode: e.target.value as any }))}
+          style={{
+            marginLeft: 'auto', fontSize: 12, color: 'var(--text)', background: 'var(--control)',
+            border: '0.5px solid var(--line)', borderRadius: 6, padding: '3px 8px', outline: 'none',
+          }}
+        >
+          {blendModes.map((m) => (
+            <option key={m} value={m}>{blendModeTitle(m)}</option>
+          ))}
+        </select>
       </div>
       <ScrubRow title={L('不透明度', 'Opacity')} value={layer.opacity} onChange={(v) => update((l) => ({ ...l, opacity: v }))} range={[0, 100]} defaultValue={100} help="opacity" suffix="%" />
       <div className="hairline-h" />

@@ -449,12 +449,54 @@ export const defaultParams = (): LayerParams => ({
   equalize: { curve: [] },
 })
 
+export type LayerBlendMode =
+  | 'normal'
+  | 'multiply'
+  | 'screen'
+  | 'overlay'
+  | 'softLight'
+  | 'hardLight'
+  | 'colorDodge'
+  | 'colorBurn'
+  | 'darken'
+  | 'lighten'
+  | 'color'
+  | 'luminosity'
+
+export const blendModes: LayerBlendMode[] = [
+  'normal', 'multiply', 'screen', 'overlay', 'softLight', 'hardLight',
+  'colorDodge', 'colorBurn', 'darken', 'lighten', 'color', 'luminosity',
+]
+
+export function blendModeTitle(m: LayerBlendMode): string {
+  switch (m) {
+    case 'normal': return L('正常', 'Normal')
+    case 'multiply': return L('正片叠底', 'Multiply')
+    case 'screen': return L('滤色', 'Screen')
+    case 'overlay': return L('叠加', 'Overlay')
+    case 'softLight': return L('柔光', 'Soft Light')
+    case 'hardLight': return L('强光', 'Hard Light')
+    case 'colorDodge': return L('颜色减淡', 'Color Dodge')
+    case 'colorBurn': return L('颜色加深', 'Color Burn')
+    case 'darken': return L('变暗', 'Darken')
+    case 'lighten': return L('变亮', 'Lighten')
+    case 'color': return L('颜色', 'Color')
+    case 'luminosity': return L('明度', 'Luminosity')
+  }
+}
+
+export const blendModeIndex = (m?: LayerBlendMode): number => {
+  const i = m ? blendModes.indexOf(m) : 0
+  return i >= 0 ? i : 0
+}
+
 export interface AdjustmentLayer {
   id: string
   kind: LayerKind
   name: string
   visible: boolean
   opacity: number // 0...100
+  blendMode: LayerBlendMode
   params: LayerParams
 }
 
@@ -464,6 +506,7 @@ export const newLayer = (kind: LayerKind): AdjustmentLayer => ({
   name: kindTitle(kind),
   visible: true,
   opacity: 100,
+  blendMode: 'normal',
   params: defaultParams(),
 })
 
@@ -491,15 +534,54 @@ export function resetLayerParams(layer: AdjustmentLayer): AdjustmentLayer {
   return { ...layer, params: p }
 }
 
+// MARK: - 裁剪与旋转拉直
+
+export interface CropSettings {
+  x: number
+  y: number
+  width: number
+  height: number
+  straighten: number
+  quarterTurns: number
+  flipH: boolean
+  flipV: boolean
+}
+
+export const defaultCrop = (): CropSettings => ({
+  x: 0,
+  y: 0,
+  width: 1,
+  height: 1,
+  straighten: 0,
+  quarterTurns: 0,
+  flipH: false,
+  flipV: false,
+})
+
+export const cropIsIdentity = (c?: CropSettings): boolean => {
+  if (!c) return true
+  return (
+    Math.abs(c.x) < 1e-4 &&
+    Math.abs(c.y) < 1e-4 &&
+    Math.abs(c.width - 1) < 1e-4 &&
+    Math.abs(c.height - 1) < 1e-4 &&
+    Math.abs(c.straighten) < 1e-3 &&
+    ((c.quarterTurns % 4) + 4) % 4 === 0 &&
+    !c.flipH &&
+    !c.flipV
+  )
+}
+
 // MARK: - 整体编辑状态（撤销历史保存的就是它）
 
 export interface EditState {
   basic: BasicSettings
   /** 数组下标 0 是最底层，最后一个是最顶层（和 PS 一样，越上面越后计算） */
   layers: AdjustmentLayer[]
+  crop: CropSettings
 }
 
-export const defaultState = (): EditState => ({ basic: defaultBasic(), layers: [] })
+export const defaultState = (): EditState => ({ basic: defaultBasic(), layers: [], crop: defaultCrop() })
 
 /** 深度比较（状态都是纯数据） */
 export function deepEqual(a: any, b: any): boolean {
@@ -518,11 +600,13 @@ export function deepEqual(a: any, b: any): boolean {
 }
 
 export const basicIsDefault = (b: BasicSettings) => deepEqual(b, defaultBasic())
-export const stateIsDefault = (s: EditState) => s.layers.length === 0 && basicIsDefault(s.basic)
+export const stateIsDefault = (s: EditState) => s.layers.length === 0 && basicIsDefault(s.basic) && cropIsIdentity(s.crop)
 
 /** 把读进来的预设补齐缺失字段（兼容 Mac 版导出的 JSON） */
 export function normalizeState(raw: any): EditState {
   const basic = { ...defaultBasic(), ...(raw?.basic ?? {}) }
+  const crop: CropSettings = { ...defaultCrop(), ...(raw?.crop ?? {}) }
+  crop.quarterTurns = ((Math.round(crop.quarterTurns) % 4) + 4) % 4
   const layers: AdjustmentLayer[] = (raw?.layers ?? [])
     .filter((l: any) => allKinds.includes(l?.kind))
     .map((l: any) => {
@@ -533,16 +617,18 @@ export function normalizeState(raw: any): EditState {
         if (v && typeof v === 'object' && !Array.isArray(v)) params[k] = { ...(d as any)[k], ...v }
       }
       params.gradientMap.stops = (params.gradientMap.stops ?? []).map((s: any) => ({ ...s, id: typeof s.id === 'string' ? s.id : uuid() }))
+      const blendMode: LayerBlendMode = blendModes.includes(l.blendMode) ? l.blendMode : 'normal'
       return {
         id: typeof l.id === 'string' ? l.id : uuid(),
         kind: l.kind,
         name: typeof l.name === 'string' ? l.name : kindTitle(l.kind),
         visible: l.visible !== false,
         opacity: typeof l.opacity === 'number' ? l.opacity : 100,
+        blendMode,
         params,
       }
     })
-  return { basic, layers }
+  return { basic, layers, crop }
 }
 
 /** 描述一组调整的简短文字，例如“3 个调整图层 · 基础调整” */

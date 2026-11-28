@@ -1,13 +1,14 @@
 import { useRef, useSyncExternalStore } from 'react'
 import { Spring, spring } from '../anim'
 import { colorStatsOf, downscale, Histogram, histogramOf, sampleColor } from '../engine/analysis'
+import { cropCanvas, cropPixels16 } from '../engine/crop'
 import { neutralizingWhiteBalance, parseCube, writeCube } from '../engine/colormath'
 import { Renderer, Source } from '../engine/renderer'
 import { L } from '../i18n'
 import * as P from '../platform'
 import { builtInPresets, BuiltInPreset } from './presets'
 import {
-  AdjustmentLayer, adjustmentSummary, clone, deepEqual, defaultBasic, defaultState, EditState, kindTitle,
+  AdjustmentLayer, adjustmentSummary, clone, cropIsIdentity, deepEqual, defaultBasic, defaultCrop, defaultState, EditState, kindTitle,
   LayerKind, newLayer, normalizeState, RGBColor, stateIsDefault, uuid,
 } from './types'
 
@@ -131,6 +132,7 @@ export class EditDocument {
   showInspector = true
   showSidebar = true
   activeBasicTab = 0
+  isCropping = false
   eyedropper: Eyedropper | null = null
   dropHover = false
   /** 显示“正在加载”时的提示 */
@@ -557,14 +559,28 @@ export class EditDocument {
     if (!s || !r) return
     let hist: Histogram | null = null
     try {
-      const bmp = r.renderBitmap(
+      let bmp = r.renderBitmap(
         s.preview, this.state,
         { refWidth: s.preview.width, refHeight: s.preview.height, originX: 0, originY: 0, outWidth: s.preview.width, outHeight: s.preview.height },
         (px, w, h) => (hist = histogramOf(px, w, h)),
       )
+      const effectiveCrop = this.isCropping ? { ...this.state.crop, x: 0, y: 0, width: 1, height: 1 } : this.state.crop
+      let origBmp = s.original
+      if (!cropIsIdentity(effectiveCrop)) {
+        const croppedCanvas = cropCanvas(bmp, effectiveCrop)
+        const cctx = croppedCanvas.getContext('2d')!
+        const idata = cctx.getImageData(0, 0, croppedCanvas.width, croppedCanvas.height)
+        hist = histogramOf(idata.data, croppedCanvas.width, croppedCanvas.height)
+        bmp.close()
+        bmp = croppedCanvas.transferToImageBitmap()
+        origBmp = cropCanvas(s.original, effectiveCrop).transferToImageBitmap()
+      }
       const old = this.previewImage
       this.previewImage = bmp
       if (old && old !== bmp && !this.sessions.some((x) => x.rendered === old)) old.close()
+      const oldOrig = this.originalImage
+      this.originalImage = origBmp
+      if (oldOrig && oldOrig !== origBmp && !this.sessions.some((x) => x.original === oldOrig)) oldOrig.close()
       this.histogram = hist
       if (isNew) {
         this.developID = s.id
@@ -627,7 +643,7 @@ export class EditDocument {
     this.detailGeneration++
     const s = this.active
     const preview = this.previewImage
-    if (!s || !preview || this.zoom <= 1.05 || this.fitSize.width <= 0 || this.viewSize.width <= 0) {
+    if (!s || !preview || this.zoom <= 1.05 || !cropIsIdentity(this.state.crop) || this.isCropping || this.fitSize.width <= 0 || this.viewSize.width <= 0) {
       if (this.detail) {
         this.detail = null
       }
@@ -969,16 +985,32 @@ export class EditDocument {
 
   applyBuiltInPreset(p: BuiltInPreset) {
     this.selectedLayerID = null
-    this.setState(p.state)
+    this.setState({ ...p.state, crop: this.state.crop })
     this.sweepToken++
     this.emit()
   }
 
   setActiveBasicTab(tab: number) {
-    const next = Math.max(0, Math.min(4, Math.round(tab)))
+    const next = Math.max(0, Math.min(5, Math.round(tab)))
     if (this.activeBasicTab === next) return
     this.activeBasicTab = next
+    this.setCropping(next === 5)
     this.emit()
+  }
+
+  setCropping(v: boolean) {
+    if (this.isCropping === v) return
+    this.isCropping = v
+    this.scheduleRender()
+    this.emit()
+  }
+
+  setCrop(patch: Partial<EditState['crop']>) {
+    this.update((s) => ({ ...s, crop: { ...s.crop, ...patch } }))
+  }
+
+  resetCrop() {
+    this.update((s) => ({ ...s, crop: defaultCrop() }))
   }
 
   sessionSummaries() {
@@ -1013,14 +1045,15 @@ export class EditDocument {
     }, 8) as Uint8Array
     const canvas = new OffscreenCanvas(w, h)
     canvas.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(px), w, h), 0, 0)
-    const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.9 })
+    const finalCanvas = cropIsIdentity(this.state.crop) ? canvas : cropCanvas(canvas, this.state.crop)
+    const blob = await finalCanvas.convertToBlob({ type: 'image/jpeg', quality: 0.9 })
     const bytes = new Uint8Array(await blob.arrayBuffer())
     let bin = ''
     const chunk = 0x8000
     for (let i = 0; i < bytes.length; i += chunk) {
       bin += String.fromCharCode(...bytes.subarray(i, i + chunk))
     }
-    return { width: w, height: h, bytes, base64: btoa(bin) }
+    return { width: finalCanvas.width, height: finalCanvas.height, bytes, base64: btoa(bin) }
   }
 
   // MARK: - 导出
@@ -1037,57 +1070,113 @@ export class EditDocument {
 
   async exportToPath(path: string, format: ExportFormat, quality: number, maxSide: number | null): Promise<void> {
     const s = this.active
-    const r = this.renderer
-    if (!s || !r) throw new Error('No photo open')
+    if (!s || !this.renderer) throw new Error('No photo open')
     this.isExporting = true
     this.showExportSheet = false
     this.emit()
-    const snapshot = this.state
     let message = L('已导出', 'Exported')
-    // 让“正在导出”先显示出来
     await new Promise((res) => setTimeout(res, 60))
     try {
-      const limit = Math.min(maxSide ?? Infinity, r.maxTextureSize)
-      const { src, w: W, h: H } = await this.loadSource(s, limit)
-      const bits = format === 'TIFF' ? 16 : 8
-      const out = bits === 8 ? new Uint8ClampedArray(W * H * 4) : new Uint16Array(W * H * 4)
-      // 分块渲染，每块多留一圈边，显存占用小、大图也不会失败
-      const tile = 2048
-      const margin = Math.round(Math.max(W, H) * 0.035)
-      for (let ty = 0; ty < H; ty += tile) {
-        for (let tx = 0; tx < W; tx += tile) {
-          const cw = Math.min(tile, W - tx), ch = Math.min(tile, H - ty)
-          const rx = Math.max(0, tx - margin), ry = Math.max(0, ty - margin)
-          const rw = Math.min(W, tx + cw + margin) - rx, rh = Math.min(H, ty + ch + margin) - ry
-          const px = r.renderPixels(src, snapshot, {
-            refWidth: W, refHeight: H, originX: rx, originY: ry,
-            srcRect: { x: rx, y: ry, w: rw, h: rh },
-            crop: { x: tx - rx, y: ty - ry, w: cw, h: ch },
-            outWidth: cw, outHeight: ch,
-          }, bits)
-          for (let y = 0; y < ch; y++) {
-            out.set(px.subarray(y * cw * 4, (y + 1) * cw * 4) as any, ((ty + y) * W + tx) * 4)
-          }
-          await new Promise((res) => setTimeout(res, 0))
-        }
-      }
-      r.dispose(src)
-      r.trim()
-      if (format === 'TIFF') {
-        await P.writeTiff16(path, out as Uint16Array, W, H)
-      } else {
-        const canvas = new OffscreenCanvas(W, H)
-        canvas.getContext('2d')!.putImageData(new ImageData(out as Uint8ClampedArray<ArrayBuffer>, W, H), 0, 0)
-        const type = format === 'JPEG' ? 'image/jpeg' : format === 'WEBP' ? 'image/webp' : 'image/png'
-        const blob = await canvas.convertToBlob({ type, quality })
-        await P.writeBytes(path, new Uint8Array(await blob.arrayBuffer()))
-      }
+      await this.exportSessionToPath(s, path, this.state, format, quality, maxSide)
     } catch (e: any) {
       console.error(e)
       message = L(`导出失败：${e?.message ?? e}`, `Export failed: ${e?.message ?? e}`)
     }
     this.isExporting = false
     this.showToast(message)
+  }
+
+  async exportAll(format: ExportFormat, quality: number, maxSide: number | null) {
+    if (!this.sessions.length) return
+    const dir = await P.pickDirectory(L('选择批量导出文件夹', 'Choose Batch Export Folder'))
+    if (!dir) return
+    this.showExportSheet = false
+    await this.exportAllToDirectory(dir, format, quality, maxSide)
+  }
+
+  async exportAllToDirectory(dir: string, format: ExportFormat, quality: number, maxSide: number | null): Promise<string[]> {
+    if (!this.sessions.length || !this.renderer) throw new Error('No photo open')
+    this.stashActive()
+    this.isExporting = true
+    this.showExportSheet = false
+    this.emit()
+    const ext = formatExt[format]
+    const sep = dir.includes('\\') ? '\\' : '/'
+    const cleanDir = dir.replace(/[\\/]+$/, '')
+    const usedNames = new Set<string>()
+    const files: string[] = []
+    try {
+      for (let i = 0; i < this.sessions.length; i++) {
+        const s = this.sessions[i]
+        this.showToast(L(`正在批量导出 ${i + 1}/${this.sessions.length}…`, `Exporting ${i + 1}/${this.sessions.length}…`))
+        const base = `${s.name}-Lumen`
+        let candidate = `${base}.${ext}`
+        let suffix = 2
+        while (usedNames.has(candidate)) {
+          candidate = `${base}-${suffix}.${ext}`
+          suffix++
+        }
+        usedNames.add(candidate)
+        const dest = `${cleanDir}${sep}${candidate}`
+        await this.exportSessionToPath(s, dest, s.state, format, quality, maxSide)
+        files.push(dest)
+      }
+      this.showToast(L(`已批量导出 ${files.length} 张照片`, `Batch exported ${files.length} photos`))
+      return files
+    } catch (e: any) {
+      this.showToast(L(`批量导出失败：${e?.message ?? e}`, `Batch export failed: ${e?.message ?? e}`))
+      throw e
+    } finally {
+      this.isExporting = false
+      this.emit()
+    }
+  }
+
+  private async exportSessionToPath(
+    s: PhotoSession,
+    path: string,
+    snapshot: EditState,
+    format: ExportFormat,
+    quality: number,
+    maxSide: number | null,
+  ): Promise<void> {
+    const r = this.renderer!
+    const limit = Math.min(maxSide ?? Infinity, r.maxTextureSize)
+    const { src, w: W, h: H } = await this.loadSource(s, limit)
+    const bits = format === 'TIFF' ? 16 : 8
+    const out = bits === 8 ? new Uint8ClampedArray(W * H * 4) : new Uint16Array(W * H * 4)
+    const tile = 2048
+    const margin = Math.round(Math.max(W, H) * 0.035)
+    for (let ty = 0; ty < H; ty += tile) {
+      for (let tx = 0; tx < W; tx += tile) {
+        const cw = Math.min(tile, W - tx), ch = Math.min(tile, H - ty)
+        const rx = Math.max(0, tx - margin), ry = Math.max(0, ty - margin)
+        const rw = Math.min(W, tx + cw + margin) - rx, rh = Math.min(H, ty + ch + margin) - ry
+        const px = r.renderPixels(src, snapshot, {
+          refWidth: W, refHeight: H, originX: rx, originY: ry,
+          srcRect: { x: rx, y: ry, w: rw, h: rh },
+          crop: { x: tx - rx, y: ty - ry, w: cw, h: ch },
+          outWidth: cw, outHeight: ch,
+        }, bits)
+        for (let y = 0; y < ch; y++) {
+          out.set(px.subarray(y * cw * 4, (y + 1) * cw * 4) as any, ((ty + y) * W + tx) * 4)
+        }
+        await new Promise((res) => setTimeout(res, 0))
+      }
+    }
+    r.dispose(src)
+    r.trim()
+    if (format === 'TIFF') {
+      const cropped = cropPixels16(out as Uint16Array, W, H, snapshot.crop)
+      await P.writeTiff16(path, cropped.data, cropped.width, cropped.height)
+    } else {
+      const canvas = new OffscreenCanvas(W, H)
+      canvas.getContext('2d')!.putImageData(new ImageData(out as Uint8ClampedArray<ArrayBuffer>, W, H), 0, 0)
+      const finalCanvas = cropIsIdentity(snapshot.crop) ? canvas : cropCanvas(canvas, snapshot.crop)
+      const type = format === 'JPEG' ? 'image/jpeg' : format === 'WEBP' ? 'image/webp' : 'image/png'
+      const blob = await finalCanvas.convertToBlob({ type, quality })
+      await P.writeBytes(path, new Uint8Array(await blob.arrayBuffer()))
+    }
   }
 
   async exportLUT() {

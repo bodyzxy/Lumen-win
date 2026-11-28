@@ -4,7 +4,7 @@ import { helpEntry } from '../help/help'
 import { L } from '../i18n'
 import { doc, EditDocument, useDoc } from '../model/doc'
 import { builtInPresets, BuiltInPreset } from '../model/presets'
-import { AdjustmentLayer, allKinds, basicIsDefault, kindEnglish, kindTitle, LayerKind } from '../model/types'
+import { AdjustmentLayer, allKinds, basicIsDefault, blendModeTitle, kindEnglish, kindTitle, LayerKind } from '../model/types'
 import { Bitmap } from './Bitmap'
 import { Icon, kindSymbol } from './icons'
 import { BareIcon, HelpBadge, MicroLabel } from './kit'
@@ -187,9 +187,10 @@ function LayerRow({ layer, selected, onSelect }: { layer: AdjustmentLayer; selec
           >
             {layer.name}
           </span>
-          {layer.opacity < 100 && (
-            <span className="mono" style={{ fontSize: 10, color: 'var(--text3)', lineHeight: 1 }}>
-              {Math.floor(layer.opacity)}%
+          {(layer.opacity < 100 || layer.blendMode !== 'normal') && (
+            <span className="mono" style={{ fontSize: 10, color: 'var(--text3)', lineHeight: 1, display: 'flex', gap: 5 }}>
+              {layer.blendMode !== 'normal' && <span>{blendModeTitle(layer.blendMode)}</span>}
+              {layer.opacity < 100 && <span>{Math.floor(layer.opacity)}%</span>}
             </span>
           )}
         </div>

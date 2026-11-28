@@ -66,6 +66,37 @@ vec3 hslToRgb(float hDeg, float s, float l) {
   return vec3(hue2rgb(p, q, hn + 1.0 / 3.0), hue2rgb(p, q, hn), hue2rgb(p, q, hn - 1.0 / 3.0));
 }
 
+float blendCh(float b, float t, int mode) {
+  b = clamp01(b); t = clamp01(t);
+  switch (mode) {
+    case 1: return b * t;
+    case 2: return 1.0 - (1.0 - b) * (1.0 - t);
+    case 3: return b < 0.5 ? 2.0 * b * t : 1.0 - 2.0 * (1.0 - b) * (1.0 - t);
+    case 4: return t <= 0.5 ? b - (1.0 - 2.0 * t) * b * (1.0 - b) : b + (2.0 * t - 1.0) * (sqrt(b) - b);
+    case 5: return t < 0.5 ? 2.0 * b * t : 1.0 - 2.0 * (1.0 - b) * (1.0 - t);
+    case 6: return t >= 0.9999 ? 1.0 : min(1.0, b / max(1e-5, 1.0 - t));
+    case 7: return t <= 0.0001 ? 0.0 : max(0.0, 1.0 - (1.0 - b) / max(1e-5, t));
+    case 8: return min(b, t);
+    case 9: return max(b, t);
+  }
+  return t;
+}
+
+vec3 applyBlend(vec3 base, vec3 top, int mode) {
+  if (mode == 0) return top;
+  if (mode == 10) {
+    vec3 hb = rgbToHsl(clamp01(base));
+    vec3 ht = rgbToHsl(clamp01(top));
+    return hslToRgb(ht.x, ht.y, hb.z);
+  }
+  if (mode == 11) {
+    vec3 hb = rgbToHsl(clamp01(base));
+    vec3 ht = rgbToHsl(clamp01(top));
+    return hslToRgb(hb.x, hb.y, ht.z);
+  }
+  return vec3(blendCh(base.r, top.r, mode), blendCh(base.g, top.g, mode), blendCh(base.b, top.b, mode));
+}
+
 float contrastCurve(float v, float a) {
   float x = clamp01(v);
   float e = a > 0.0 ? 1.0 + a * 1.2 : 1.0 / (1.0 + (-a) * 0.9);
@@ -251,12 +282,22 @@ void main() {
   outColor = vec4(c, 1.0);
 }`
 
-/** 溶解（空间类图层的不透明度） */
+/** 溶解与混合（空间类图层的混合模式与不透明度） */
 export const FRAG_DISSOLVE = COMMON + `
 uniform sampler2D u_a;
 uniform sampler2D u_b;
 uniform float u_t;
-void main() { outColor = vec4(mix(texture(u_a, v_uv).rgb, texture(u_b, v_uv).rgb, u_t), 1.0); }`
+uniform int u_blend;
+void main() {
+  vec3 a = texture(u_a, v_uv).rgb;
+  vec3 b = texture(u_b, v_uv).rgb;
+  if (u_blend != 0) {
+    vec3 ag = clamp01(toGamma(a));
+    vec3 bg = clamp01(toGamma(b));
+    b = toLinear(clamp01(applyBlend(ag, bg, u_blend)));
+  }
+  outColor = vec4(mix(a, b, u_t), 1.0);
+}`
 
 /** 暗角 + 颗粒（线性空间） */
 export const FRAG_FINISH = COMMON + `
@@ -343,6 +384,7 @@ export const FRAG_LAYER = COMMON + `
 uniform sampler2D u_src;
 uniform int u_kind;
 uniform float u_opacity;
+uniform int u_blend;
 uniform float u_p[64];
 uniform vec3 u_c[12];
 uniform sampler2D u_table;   // R32F 1024×5：曲线 RGB/R/G/B + 均化
@@ -728,6 +770,7 @@ void main() {
   vec3 lin = texture(u_src, v_uv).rgb;
   vec3 c = clamp01(toGamma(lin));
   vec3 o = process(c);
+  if (u_blend != 0) o = applyBlend(c, o, u_blend);
   if (u_opacity < 0.999) o = mix(c, o, u_opacity);
   outColor = vec4(toLinear(clamp01(o)), 1.0);
 }`

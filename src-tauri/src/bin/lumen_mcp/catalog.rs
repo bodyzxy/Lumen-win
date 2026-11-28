@@ -89,6 +89,11 @@ pub fn tools() -> Vec<Value> {
                 "name": { "type": "string", "description": "Optional custom layer name." },
                 "opacity": { "type": "number", "description": "Layer opacity 0...100 (default 100)." },
                 "visible": { "type": "boolean", "description": "Layer visibility (default true)." },
+                "blend_mode": {
+                    "type": "string",
+                    "enum": ["normal", "multiply", "screen", "overlay", "softLight", "hardLight", "colorDodge", "colorBurn", "darken", "lighten", "color", "luminosity"],
+                    "description": "Layer blend mode (default normal)."
+                },
                 "params": { "type": "object", "description": "Layer-specific parameter fields." },
                 "index": { "type": "integer", "description": "Optional stack index (0 = bottom)." }
             }),
@@ -96,12 +101,16 @@ pub fn tools() -> Vec<Value> {
         ),
         tool(
             "update_layer",
-            "Update an existing adjustment layer's visibility, opacity, name, or parameters in the live UI.",
+            "Update an existing adjustment layer's visibility, opacity, blend mode, name, or parameters in the live UI.",
             json!({
                 "layer_id": { "type": "string", "description": "UUID of the layer." },
                 "name": { "type": "string" },
                 "visible": { "type": "boolean" },
                 "opacity": { "type": "number" },
+                "blend_mode": {
+                    "type": "string",
+                    "enum": ["normal", "multiply", "screen", "overlay", "softLight", "hardLight", "colorDodge", "colorBurn", "darken", "lighten", "color", "luminosity"]
+                },
                 "params": { "type": "object", "description": "Partial parameter patch for this layer." }
             }),
             &["layer_id"],
@@ -208,6 +217,33 @@ pub fn tools() -> Vec<Value> {
             &["output_path"],
         ),
         tool(
+            "set_crop",
+            "Crop, rotate (90° turns), flip, or straighten the active photo using normalized coordinates (0..1, top-left origin).",
+            json!({
+                "x": { "type": "number", "description": "Normalized left edge (0...1)." },
+                "y": { "type": "number", "description": "Normalized top edge (0...1)." },
+                "width": { "type": "number", "description": "Normalized width (0.05...1)." },
+                "height": { "type": "number", "description": "Normalized height (0.05...1)." },
+                "straighten": { "type": "number", "description": "Straighten angle in degrees (-45...45)." },
+                "quarter_turns": { "type": "integer", "description": "90-degree clockwise turns (0..3)." },
+                "flip_h": { "type": "boolean" },
+                "flip_v": { "type": "boolean" },
+                "reset": { "type": "boolean", "description": "Reset crop & transform to original." }
+            }),
+            &[],
+        ),
+        tool(
+            "batch_export",
+            "Batch export all open photos in the filmstrip to a destination directory.",
+            json!({
+                "output_dir": { "type": "string", "description": "Destination directory path." },
+                "format": { "type": "string", "enum": ["jpeg", "png", "webp", "tiff"], "description": "Export format (default jpeg)." },
+                "quality": { "type": "number", "description": "Compression quality 0.5...1.0 (default 0.92)." },
+                "max_side": { "type": "number", "description": "Optional max long edge in pixels; omit for original full size." }
+            }),
+            &["output_dir"],
+        ),
+        tool(
             "export_lut",
             "Bake and export the color & tone pipeline of the active photo as a .cube 3D LUT file.",
             json!({
@@ -215,6 +251,33 @@ pub fn tools() -> Vec<Value> {
                 "size": { "type": "integer", "description": "LUT cube dimension (default 33)." }
             }),
             &["output_path"],
+        ),
+        tool(
+            "set_crop",
+            "Crop, rotate (90° turns), flip, or straighten the active photo using normalized coordinates (0..1, top-left origin).",
+            json!({
+                "x": { "type": "number", "description": "Normalized left edge (0...1)." },
+                "y": { "type": "number", "description": "Normalized top edge (0...1)." },
+                "width": { "type": "number", "description": "Normalized width (0.05...1)." },
+                "height": { "type": "number", "description": "Normalized height (0.05...1)." },
+                "straighten": { "type": "number", "description": "Straighten angle in degrees (-45...45)." },
+                "quarter_turns": { "type": "integer", "description": "90-degree clockwise turns (0..3)." },
+                "flip_h": { "type": "boolean" },
+                "flip_v": { "type": "boolean" },
+                "reset": { "type": "boolean", "description": "Reset crop & transform to original." }
+            }),
+            &[],
+        ),
+        tool(
+            "batch_export",
+            "Batch export all open photos in the filmstrip to a destination directory.",
+            json!({
+                "output_dir": { "type": "string", "description": "Destination directory path." },
+                "format": { "type": "string", "enum": ["jpeg", "png", "webp", "tiff"], "description": "Export format (default jpeg)." },
+                "quality": { "type": "number", "description": "Compression quality 0.5...1.0 (default 0.92)." },
+                "max_side": { "type": "number", "description": "Optional max long edge in pixels; omit for original full size." }
+            }),
+            &["output_dir"],
         ),
     ]
 }

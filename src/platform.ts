@@ -94,6 +94,13 @@ export async function pickSavePath(defaultName: string, ext: string, title: stri
   return await save({ defaultPath: defaultName, title, filters: [{ name: ext.toUpperCase(), extensions: [ext] }] })
 }
 
+export async function pickDirectory(title: string): Promise<string | null> {
+  if (!isTauri) return null
+  const { open } = await dialog()
+  const res = await open({ directory: true, multiple: false, title })
+  return typeof res === 'string' ? res : null
+}
+
 export async function readBytes(f: PickedFile): Promise<Uint8Array> {
   if (f.file) return new Uint8Array(await f.file.arrayBuffer())
   const { invoke } = await core()

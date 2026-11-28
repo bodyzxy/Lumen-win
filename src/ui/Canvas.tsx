@@ -23,6 +23,8 @@ export function CanvasView() {
   const [ref, full] = useSize<HTMLDivElement>()
   const hasImage = useDoc((d) => d.hasImage)
   const imageSize = useDoc((d) => d.imageSize)
+  const isCropping = useDoc((d) => d.isCropping)
+  const crop = useDoc((d) => d.state.crop)
   const preview = useDoc((d) => d.previewImage)
   const original = useDoc((d) => d.originalImage)
   const activeID = useDoc((d) => d.activeID)
@@ -44,7 +46,8 @@ export function CanvasView() {
 
   /** 照片在“适应窗口”时的显示尺寸（严格按原图比例） */
   const fit = (() => {
-    const W = imageSize.width, H = imageSize.height
+    const W = preview?.width ?? imageSize.width
+    const H = preview?.height ?? imageSize.height
     if (W <= 0 || H <= 0) return { width: 0, height: 0 }
     const k = Math.min(Math.max(10, stage.width - 64) / W, Math.max(10, stage.height - 48) / H)
     return { width: W * k, height: H * k }
@@ -144,6 +147,7 @@ export function CanvasView() {
           }}
         >
           <PhotoView key={activeID} id={activeID} edited={preview} original={original} width={w} height={h} />
+          {isCropping && <CropOverlay x={crop.x} y={crop.y} width={crop.width} height={crop.height} stageW={w} stageH={h} />}
         </div>
       ) : isLoading ? (
         <Spinner style={{ position: 'absolute', left: stage.width / 2 - 9, top: stage.height / 2 - 9 }} />
@@ -679,6 +683,7 @@ function CanvasControlBar() {
   const canUndo = useDoc((d) => d.canUndo)
   const canRedo = useDoc((d) => d.canRedo)
   const compare = useDoc((d) => d.compareMode)
+  const isCropping = useDoc((d) => d.isCropping)
   const zoom = useDoc((d) => d.zoom)
   const percent = useDoc((d) => d.actualPercent)
   const divider = <span className="hairline-v" style={{ height: 16, margin: '0 4px' }} />
@@ -689,6 +694,19 @@ function CanvasControlBar() {
       {divider}
       <BareIcon icon="square.split.2x1" active={compare === 'split'} onClick={() => doc.set('compareMode', compare === 'split' ? 'off' : 'split')} help={L('左右对比（\\）', 'Split view (\\)')} />
       <HoldOriginalButton />
+      <BareIcon
+        icon="crop"
+        active={isCropping}
+        onClick={() => {
+          if (isCropping) doc.setActiveBasicTab(0)
+          else {
+            doc.selectLayer(null)
+            doc.set('showInspector', true)
+            doc.setActiveBasicTab(5)
+          }
+        }}
+        help={L('裁剪与旋转', 'Crop & Straighten')}
+      />
       {divider}
       <BareIcon icon="minus" onClick={() => doc.setZoom(doc.zoom / 1.5, undefined, spring(0.45, 0.86))} help={L('缩小（Ctrl+-）', 'Zoom out (Ctrl+-)')} />
       <button
@@ -764,3 +782,70 @@ function EmptyStage({ hover, error }: { hover: boolean; error: string | null }) 
   )
 }
 
+
+function CropOverlay({ x, y, width, height, stageW, stageH }: {
+  x: number; y: number; width: number; height: number; stageW: number; stageH: number
+}) {
+  const drag = useRef<{ mode: 'move' | 'tl' | 'tr' | 'bl' | 'br'; sx: number; sy: number; ox: number; oy: number; ow: number; oh: number } | null>(null)
+  const start = (mode: 'move' | 'tl' | 'tr' | 'bl' | 'br', e: React.PointerEvent) => {
+    e.stopPropagation()
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    drag.current = { mode, sx: e.clientX, sy: e.clientY, ox: x, oy: y, ow: width, oh: height }
+  }
+  const move = (e: React.PointerEvent) => {
+    const d = drag.current
+    if (!d || stageW <= 0 || stageH <= 0) return
+    const dx = (e.clientX - d.sx) / stageW
+    const dy = (e.clientY - d.sy) / stageH
+    const min = 0.05
+    if (d.mode === 'move') {
+      doc.setCrop({ x: Math.max(0, Math.min(1 - d.ow, d.ox + dx)), y: Math.max(0, Math.min(1 - d.oh, d.oy + dy)) })
+    } else if (d.mode === 'tl') {
+      const nx = Math.max(0, Math.min(d.ox + d.ow - min, d.ox + dx))
+      const ny = Math.max(0, Math.min(d.oy + d.oh - min, d.oy + dy))
+      doc.setCrop({ x: nx, y: ny, width: d.ox + d.ow - nx, height: d.oy + d.oh - ny })
+    } else if (d.mode === 'tr') {
+      const nw = Math.max(min, Math.min(1 - d.ox, d.ow + dx))
+      const ny = Math.max(0, Math.min(d.oy + d.oh - min, d.oy + dy))
+      doc.setCrop({ y: ny, width: nw, height: d.oy + d.oh - ny })
+    } else if (d.mode === 'bl') {
+      const nx = Math.max(0, Math.min(d.ox + d.ow - min, d.ox + dx))
+      const nh = Math.max(min, Math.min(1 - d.oy, d.oh + dy))
+      doc.setCrop({ x: nx, width: d.ox + d.ow - nx, height: nh })
+    } else {
+      doc.setCrop({ width: Math.max(min, Math.min(1 - d.ox, d.ow + dx)), height: Math.max(min, Math.min(1 - d.oy, d.oh + dy)) })
+    }
+  }
+  const end = () => { drag.current = null }
+  const left = x * stageW, top = y * stageH, w = width * stageW, h = height * stageH
+  const handle = (mode: 'tl' | 'tr' | 'bl' | 'br', hx: number, hy: number, cursor: string) => (
+    <div
+      key={mode}
+      onPointerDown={(e) => start(mode, e)}
+      onPointerMove={move}
+      onPointerUp={end}
+      style={{
+        position: 'absolute', left: hx - 6, top: hy - 6, width: 12, height: 12,
+        borderRadius: 2, background: '#fff', boxShadow: '0 0 0 1px rgba(0,0,0,0.45)', cursor,
+      }}
+    />
+  )
+  return (
+    <div data-nodrag style={{ position: 'absolute', inset: 0, pointerEvents: 'auto' }}>
+      <div style={{
+        position: 'absolute', left, top, width: w, height: h,
+        boxShadow: '0 0 0 9999px rgba(0,0,0,0.48), inset 0 0 0 1.5px rgba(255,255,255,0.9)',
+        cursor: 'move',
+      }} onPointerDown={(e) => start('move', e)} onPointerMove={move} onPointerUp={end}>
+        <div style={{ position: 'absolute', left: '33.33%', top: 0, bottom: 0, width: 0.5, background: 'rgba(255,255,255,0.35)' }} />
+        <div style={{ position: 'absolute', left: '66.66%', top: 0, bottom: 0, width: 0.5, background: 'rgba(255,255,255,0.35)' }} />
+        <div style={{ position: 'absolute', top: '33.33%', left: 0, right: 0, height: 0.5, background: 'rgba(255,255,255,0.35)' }} />
+        <div style={{ position: 'absolute', top: '66.66%', left: 0, right: 0, height: 0.5, background: 'rgba(255,255,255,0.35)' }} />
+      </div>
+      {handle('tl', left, top, 'nwse-resize')}
+      {handle('tr', left + w, top, 'nesw-resize')}
+      {handle('bl', left, top + h, 'nesw-resize')}
+      {handle('br', left + w, top + h, 'nwse-resize')}
+    </div>
+  )
+}

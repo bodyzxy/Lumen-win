@@ -4,7 +4,7 @@ import { L } from '../i18n'
 import { doc, ExportFormat } from '../model/doc'
 import { builtInPresets } from '../model/presets'
 import {
-  defaultBasic, EditState, hexString, LayerKind, newLayer, normalizeState, uuid,
+  blendModes, defaultBasic, EditState, hexString, LayerBlendMode, LayerKind, newLayer, normalizeState, uuid,
 } from '../model/types'
 import * as P from '../platform'
 
@@ -230,6 +230,9 @@ async function dispatch(method: string, params: Record<string, any>): Promise<an
       else if (sameCount > 0) layer.name = `${layer.name} ${sameCount + 1}`
       if (typeof params.opacity === 'number') layer.opacity = Math.max(0, Math.min(100, params.opacity))
       if (typeof params.visible === 'boolean') layer.visible = params.visible
+      if (typeof params.blend_mode === 'string' && blendModes.includes(params.blend_mode as LayerBlendMode)) {
+        layer.blendMode = params.blend_mode as LayerBlendMode
+      }
       if (params.params && typeof params.params === 'object') {
         (layer.params as any)[kind] = mergePlain((layer.params as any)[kind], params.params)
       }
@@ -265,6 +268,9 @@ async function dispatch(method: string, params: Record<string, any>): Promise<an
         if (typeof params.name === 'string') next.name = params.name
         if (typeof params.visible === 'boolean') next.visible = params.visible
         if (typeof params.opacity === 'number') next.opacity = Math.max(0, Math.min(100, params.opacity))
+        if (typeof params.blend_mode === 'string' && blendModes.includes(params.blend_mode as LayerBlendMode)) {
+          next.blendMode = params.blend_mode as LayerBlendMode
+        }
         if (params.params && typeof params.params === 'object') {
           (next.params as any)[l.kind] = mergePlain((l.params as any)[l.kind], params.params)
         }
@@ -454,6 +460,41 @@ async function dispatch(method: string, params: Record<string, any>): Promise<an
       const maxSide = typeof params.max_side === 'number' ? params.max_side : null
       await doc.exportToPath(outPath, format, quality, maxSide)
       return { output_path: outPath, format }
+    }
+
+    case 'set_crop': {
+      requireImage()
+      doc.selectLayer(null)
+      doc.setActiveBasicTab(5)
+      if (params.reset === true) {
+        doc.resetCrop()
+      } else {
+        const cur = { ...doc.state.crop }
+        if (typeof params.x === 'number') cur.x = Math.max(0, Math.min(0.95, params.x))
+        if (typeof params.y === 'number') cur.y = Math.max(0, Math.min(0.95, params.y))
+        if (typeof params.width === 'number') cur.width = Math.max(0.05, Math.min(1 - cur.x, params.width))
+        if (typeof params.height === 'number') cur.height = Math.max(0.05, Math.min(1 - cur.y, params.height))
+        if (typeof params.straighten === 'number') cur.straighten = Math.max(-45, Math.min(45, params.straighten))
+        if (typeof params.quarter_turns === 'number') cur.quarterTurns = ((Math.round(params.quarter_turns) % 4) + 4) % 4
+        if (typeof params.flip_h === 'boolean') cur.flipH = params.flip_h
+        if (typeof params.flip_v === 'boolean') cur.flipV = params.flip_v
+        doc.setCrop(cur)
+      }
+      doc.showToast(`AI · ${L('裁剪与旋转', 'Crop & Straighten')}`)
+      return { crop: doc.state.crop }
+    }
+
+    case 'batch_export': {
+      requireImage()
+      const outDir = params.output_dir
+      if (typeof outDir !== 'string' || !outDir.length) throw new Error("Missing 'output_dir'")
+      const fmtStr = String(params.format ?? 'jpeg').toUpperCase()
+      const format: ExportFormat =
+        fmtStr === 'PNG' || fmtStr === 'WEBP' || fmtStr === 'TIFF' ? fmtStr : 'JPEG'
+      const quality = typeof params.quality === 'number' ? params.quality : 0.92
+      const maxSide = typeof params.max_side === 'number' ? params.max_side : null
+      const files = await doc.exportAllToDirectory(outDir, format, quality, maxSide)
+      return { output_dir: outDir, count: files.length, files }
     }
 
     case 'export_lut': {

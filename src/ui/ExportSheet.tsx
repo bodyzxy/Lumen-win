@@ -30,15 +30,22 @@ export function ExportSheet() {
 }
 
 function ExportCard() {
+  const filmCount = useDoc((d) => d.filmstrip.length)
   const [format, setFormat] = useState<ExportFormat>('JPEG')
   const [quality, setQuality] = useState(92)
   const [sizeOption, setSizeOption] = useState(0)
+  const [batchAll, setBatchAll] = useState(false)
   const sizes: [string, number | null][] = [[L('原尺寸', 'Original'), null], ['3840', 3840], ['2048', 2048], ['1080', 1080]]
+
+  const runExport = () => {
+    if (batchAll && filmCount > 1) doc.exportAll(format, quality / 100, sizes[sizeOption][1])
+    else doc.export(format, quality / 100, sizes[sizeOption][1])
+  }
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.key === 'Escape') doc.set('showExportSheet', false)
-      if (e.key === 'Enter') doc.export(format, quality / 100, sizes[sizeOption][1])
+      if (e.key === 'Enter') runExport()
     }
     window.addEventListener('keydown', key)
     return () => window.removeEventListener('keydown', key)
@@ -82,12 +89,29 @@ function ExportCard() {
         </div>
         <InkSegment items={sizes.map((s, i) => [i, s[0]] as [number, string])} selection={sizeOption} onSelect={setSizeOption} />
       </div>
+      {filmCount > 1 && (
+        <div style={{ padding: '0 22px 16px 22px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex' }}>
+            <MicroLabel text="Scope" />
+          </div>
+          <InkSegment
+            items={[
+              [false, L('当前照片', 'Current Photo')] as [boolean, string],
+              [true, L(`全部 ${filmCount} 张照片`, `All ${filmCount} Photos`)] as [boolean, string],
+            ]}
+            selection={batchAll}
+            onSelect={setBatchAll}
+          />
+        </div>
+      )}
       <div className="hairline-h" />
       <div style={{ display: 'flex', alignItems: 'center', padding: 18 }}>
         <GlassButton onClick={() => doc.set('showExportSheet', false)}>{L('取消', 'Cancel')}</GlassButton>
         <span style={{ flex: 1 }} />
-        <GlassButton prominent onClick={() => doc.export(format, quality / 100, sizes[sizeOption][1])}>
-          {L('选择位置并导出', 'Choose Location & Export')}
+        <GlassButton prominent onClick={runExport}>
+          {batchAll && filmCount > 1
+            ? L('选择文件夹并批量导出', 'Choose Folder & Batch Export')
+            : L('选择位置并导出', 'Choose Location & Export')}
         </GlassButton>
       </div>
     </div>

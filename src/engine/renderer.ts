@@ -1,4 +1,4 @@
-import { AdjustmentLayer, BasicSettings, EditState, isSpatial, LayerKind, levelsIsIdentity } from '../model/types'
+import { AdjustmentLayer, BasicSettings, blendModeIndex, EditState, isSpatial, LayerKind, levelsIsIdentity } from '../model/types'
 import { CM, CubeLUT, curveIsIdentity, curveTable, CURVE_TABLE, whiteBalanceGains } from './colormath'
 import * as S from './shaders'
 
@@ -509,6 +509,7 @@ export class Renderer {
     }
     gl.uniform1i(u('u_kind'), KIND_ID[layer.kind] ?? 0)
     gl.uniform1f(u('u_opacity'), CM.clamp(layer.opacity / 100))
+    gl.uniform1i(u('u_blend'), blendModeIndex(layer.blendMode))
     gl.uniform1fv(u('u_p'), p)
     gl.uniform3fv(u('u_c'), c)
     gl.uniform1i(u('u_flags'), flags)
@@ -544,6 +545,7 @@ export class Renderer {
     }
     gl.uniform1i(u('u_kind'), 100)
     gl.uniform1f(u('u_opacity'), 1)
+    gl.uniform1i(u('u_blend'), 0)
     gl.uniform1fv(u('u_p'), p)
     gl.uniform1i(u('u_flags'), 0)
   }
@@ -608,7 +610,7 @@ export class Renderer {
         })
       }
     }
-    if (layer.opacity < 99.9) {
+    if (layer.opacity < 99.9 || layer.blendMode !== 'normal') {
       const gl = this.gl
       const out = this.acquire(img.w, img.h)
       const u = this.use('dissolve')
@@ -617,6 +619,7 @@ export class Renderer {
       gl.uniform1i(u('u_a'), 0)
       gl.uniform1i(u('u_b'), 1)
       gl.uniform1f(u('u_t'), layer.opacity / 100)
+      gl.uniform1i(u('u_blend'), blendModeIndex(layer.blendMode))
       this.draw(out)
       this.release(img)
       img = out
