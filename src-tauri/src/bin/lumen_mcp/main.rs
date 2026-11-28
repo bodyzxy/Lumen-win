@@ -2,7 +2,7 @@
 //! Speaks JSON-RPC 2.0 (MCP 2024-11-05) over stdin/stdout and forwards
 //! commands to the live Lumen desktop window over localhost TCP IPC.
 
-mod mcp_catalog;
+mod catalog;
 
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -131,26 +131,26 @@ fn dispatch(method: &str, params: &Value) -> Result<Value, String> {
             }
         })),
         "ping" => Ok(json!({})),
-        "tools/list" => Ok(json!({ "tools": mcp_catalog::tools() })),
+        "tools/list" => Ok(json!({ "tools": catalog::tools() })),
         "tools/call" => {
             let name = params.get("name").and_then(|v| v.as_str()).ok_or("Missing tool name")?;
             let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
             Ok(execute_tool(name, args))
         }
-        "resources/list" => Ok(json!({ "resources": mcp_catalog::resources() })),
+        "resources/list" => Ok(json!({ "resources": catalog::resources() })),
         "resources/read" => {
             let uri = params.get("uri").and_then(|v| v.as_str()).ok_or("Missing uri")?;
-            let text = mcp_catalog::read_resource(uri).ok_or("Resource not found")?;
+            let text = catalog::read_resource(uri).ok_or("Resource not found")?;
             let mime = if uri.ends_with("builtin") { "application/json" } else { "text/markdown" };
             Ok(json!({
                 "contents": [{ "uri": uri, "mimeType": mime, "text": text }]
             }))
         }
-        "prompts/list" => Ok(json!({ "prompts": mcp_catalog::prompts() })),
+        "prompts/list" => Ok(json!({ "prompts": catalog::prompts() })),
         "prompts/get" => {
             let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
             let args = params.get("arguments");
-            mcp_catalog::get_prompt(name, args).ok_or_else(|| "Unknown prompt".to_string())
+            catalog::get_prompt(name, args).ok_or_else(|| "Unknown prompt".to_string())
         }
         _ => Err(format!("Method not supported: {method}")),
     }

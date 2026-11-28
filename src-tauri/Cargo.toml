@@ -14,7 +14,7 @@ path = "src/main.rs"
 
 [[bin]]
 name = "lumen-mcp"
-path = "src/bin/lumen_mcp.rs"
+path = "src/bin/lumen_mcp/main.rs"
 
 [lib]
 name = "lumen_lib"
