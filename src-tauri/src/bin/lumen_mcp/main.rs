@@ -128,7 +128,11 @@ fn dispatch(method: &str, params: &Value) -> Result<Value, String> {
             "serverInfo": {
                 "name": "LumenMCP",
                 "version": "1.0.0"
-            }
+            },
+            "instructions": "Lumen MCP Editing Protocol:\n\
+1. UNDERSTAND BEFORE EDITING: Never blindly apply static parameters or presets. Always inspect the active photo first with BOTH `render_preview` (visual composition, subject, lighting, mood) AND `get_image_analysis` (RGB histograms, shadow/midtone/highlight zones, near_black_ratio, color_cast_hint, contrast_spread). Summarize what you observe before adjusting.\n\
+2. SEQUENTIAL PER-PHOTO WORKFLOW: When multiple photos are open (`list_sessions`), process ONE photo at a time (`switch_session` -> inspect -> tailor edits -> verify -> next photo). Do NOT call `sync_adjustments` across photos with different lighting/scenes unless the user explicitly asks to copy identical settings.\n\
+3. VERIFY & PROTECT DETAIL: After editing, call `render_preview` and `get_image_analysis` again to verify shadow detail (avoid unintended crushed blacks), highlight headroom, and overall color harmony."
         })),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({ "tools": catalog::tools() })),

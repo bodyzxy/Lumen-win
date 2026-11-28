@@ -1,4 +1,4 @@
-import { colorStatsOf, sampleColor } from '../engine/analysis'
+import { colorStatsOf, histogramOf, pixelsOf, sampleColor } from '../engine/analysis'
 import { neutralizingWhiteBalance } from '../engine/colormath'
 import { L } from '../i18n'
 import { doc, ExportFormat } from '../model/doc'
@@ -52,6 +52,79 @@ function downsample16(arr: number[]): number[] {
     out.push(sum / step)
   }
   return out
+}
+
+const round3 = (v: number) => Math.round(v * 1000) / 1000
+
+function computeTonalAndColorZones(img: ImageBitmap, lumaCounts: number[]) {
+  const { data, width, height } = pixelsOf(img, 256)
+  const total = Math.max(1, width * height)
+  let sCount = 0, mCount = 0, hCount = 0, nearBlack = 0, nearWhite = 0
+  const sRGB = [0, 0, 0], mRGB = [0, 0, 0], hRGB = [0, 0, 0], allRGB = [0, 0, 0]
+  let sLuma = 0, mLuma = 0, hLuma = 0, satSum = 0
+
+  for (let i = 0; i < total; i++) {
+    const r = data[i * 4] / 255
+    const g = data[i * 4 + 1] / 255
+    const b = data[i * 4 + 2] / 255
+    const y = 0.299 * r + 0.587 * g + 0.114 * b
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b)
+    satSum += mx > 1e-4 ? (mx - mn) / mx : 0
+    allRGB[0] += r; allRGB[1] += g; allRGB[2] += b
+    if (y < 0.05) nearBlack++
+    if (y > 0.95) nearWhite++
+    if (y < 0.25) {
+      sCount++; sLuma += y
+      sRGB[0] += r; sRGB[1] += g; sRGB[2] += b
+    } else if (y <= 0.75) {
+      mCount++; mLuma += y
+      mRGB[0] += r; mRGB[1] += g; mRGB[2] += b
+    } else {
+      hCount++; hLuma += y
+      hRGB[0] += r; hRGB[1] += g; hRGB[2] += b
+    }
+  }
+
+  const zoneDict = (count: number, lumaSum: number, rgbSum: number[]) => {
+    const d = Math.max(1, count)
+    return {
+      ratio: round3(count / total),
+      mean_luma: count > 0 ? round3(lumaSum / d) : 0,
+      mean_rgb: count > 0 ? rgbSum.map((v) => round3(v / d)) : [0, 0, 0],
+    }
+  }
+
+  const meanRGB = allRGB.map((v) => round3(v / total))
+  const warmCool = meanRGB[0] - meanRGB[2]
+  const greenTint = meanRGB[1] - (meanRGB[0] + meanRGB[2]) * 0.5
+  let cast = 'neutral'
+  if (Math.abs(warmCool) > 0.035) cast = warmCool > 0 ? 'warm' : 'cool'
+  else if (Math.abs(greenTint) > 0.025) cast = greenTint > 0 ? 'greenish' : 'magenta'
+
+  const lumaTotal = Math.max(1, lumaCounts.reduce((a, b) => a + b, 0))
+  const percentile = (p: number) => {
+    let acc = 0
+    const target = p * lumaTotal
+    for (let idx = 0; idx < lumaCounts.length; idx++) {
+      acc += lumaCounts[idx]
+      if (acc >= target) return round3(idx / 255)
+    }
+    return 1
+  }
+  const p05 = percentile(0.05), p95 = percentile(0.95)
+  return {
+    rgb_mean: meanRGB,
+    saturation_mean: round3(satSum / total),
+    color_cast_hint: cast,
+    near_black_ratio: round3(nearBlack / total),
+    near_white_ratio: round3(nearWhite / total),
+    luma_p05: p05,
+    luma_p95: p95,
+    contrast_spread: round3(p95 - p05),
+    shadows: zoneDict(sCount, sLuma, sRGB),
+    midtones: zoneDict(mCount, mLuma, mRGB),
+    highlights: zoneDict(hCount, hLuma, hRGB),
+  }
 }
 
 function requireImage() {
@@ -294,20 +367,33 @@ async function dispatch(method: string, params: Record<string, any>): Promise<an
     case 'get_image_analysis': {
       requireImage()
       await waitForPreview()
+      const useOriginal = params.source === 'original'
+      const targetImg = useOriginal ? doc.originalImage : (doc.previewImage ?? doc.originalImage)
       const res: Record<string, any> = {
         file_name: doc.fileName,
+        source: useOriginal ? 'original' : 'preview',
         width: doc.imageSize.width,
         height: doc.imageSize.height,
       }
-      if (doc.histogram) {
-        res.clip_low_ratio = doc.histogram.clipLow
-        res.clip_high_ratio = doc.histogram.clipHigh
-        res.histogram_luma_16bins = downsample16(doc.histogram.luma)
-      }
-      if (doc.previewImage) {
-        const stats = colorStatsOf(doc.previewImage)
-        res.ycbcr_mean = stats.mean
-        res.ycbcr_std = stats.std
+      if (targetImg) {
+        const hist = !useOriginal && doc.histogram
+          ? doc.histogram
+          : (() => {
+              const { data, width, height } = pixelsOf(targetImg, 512)
+              return histogramOf(data, width, height)
+            })()
+        res.clip_low_ratio = hist.clipLow
+        res.clip_high_ratio = hist.clipHigh
+        res.histogram_luma_16bins = downsample16(hist.luma)
+        res.histogram_red_16bins = downsample16(hist.red)
+        res.histogram_green_16bins = downsample16(hist.green)
+        res.histogram_blue_16bins = downsample16(hist.blue)
+        Object.assign(res, computeTonalAndColorZones(targetImg, hist.lumaCounts))
+        if (!useOriginal) {
+          const stats = colorStatsOf(targetImg)
+          res.ycbcr_mean = stats.mean
+          res.ycbcr_std = stats.std
+        }
       }
       return res
     }

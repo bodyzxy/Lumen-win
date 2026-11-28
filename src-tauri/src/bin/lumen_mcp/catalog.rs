@@ -52,7 +52,7 @@ pub fn tools() -> Vec<Value> {
         ),
         tool(
             "set_basic_adjustments",
-            "Partially update BasicSettings in Lumen with live UI animation and auto-switching to the corresponding Inspector tab (Light/Color/Texture/Effects/Calibrate). Only pass fields you want to change.",
+            "Partially update BasicSettings in Lumen with live UI animation and auto-switching to the corresponding Inspector tab (Light/Color/Texture/Effects/Calibrate). IMPORTANT: Inspect the photo first via render_preview + get_image_analysis before choosing values; never guess blind preset numbers.",
             json!({
                 "params": {
                     "type": "object",
@@ -117,7 +117,7 @@ pub fn tools() -> Vec<Value> {
         ),
         tool(
             "apply_preset",
-            "Apply a built-in look (plays the Light Sweep animation across the photo) or load a JSON preset file.",
+            "Apply a built-in look (plays the Light Sweep animation across the photo) or load a JSON preset file. Analyze the photo first via render_preview + get_image_analysis, and fine-tune exposure/WB/shadows afterwards.",
             json!({
                 "preset_key": {
                     "type": "string",
@@ -130,7 +130,7 @@ pub fn tools() -> Vec<Value> {
         ),
         tool(
             "sync_adjustments",
-            "Sync the active photo's current adjustments to other open photos in the filmstrip.",
+            "Copy identical adjustments from the active photo to other open photos. WARNING: For multiple photos with different lighting or scenes, DO NOT blindly sync; instead switch_session and analyze + grade each photo one by one. Only use sync_adjustments when the user explicitly requests identical batch copying (e.g. matching burst shots).",
             json!({
                 "target_session_ids": { "type": "array", "items": { "type": "string" }, "description": "Optional list of target session UUIDs. Omit to sync to all open photos." }
             }),
@@ -162,8 +162,10 @@ pub fn tools() -> Vec<Value> {
         ),
         tool(
             "get_image_analysis",
-            "Analyze the active edited photo: returns shadow/highlight clipping ratios, 16-bin luma histogram, and YCbCr color mean/std.",
-            json!({}),
+            "Analyze tonal & color distribution of the active photo: returns 16-bin Luma + Red/Green/Blue histograms, shadows/midtones/highlights zone breakdown (ratio, mean_luma, mean_rgb), near_black_ratio (shadow detail), near_white_ratio, contrast_spread (p05..p95), color_cast_hint, clipping ratios, and YCbCr stats.",
+            json!({
+                "source": { "type": "string", "enum": ["preview", "original"], "description": "Analyze edited 'preview' (default) or unedited 'original'." }
+            }),
             &[],
         ),
         tool(
@@ -261,11 +263,11 @@ pub fn get_prompt(name: &str, args: Option<&Value>) -> Option<Value> {
                 "text": format!(
                     "Edit the photo in Lumen with goal: {goal}.\n\
                      Follow these steps so the user can watch every adjustment live in Lumen:\n\
-                     1. Ensure a photo is open (`list_sessions` or `open_photos`).\n\
-                     2. Inspect the photo with `get_image_analysis` and `render_preview`.\n\
-                     3. Fix exposure, contrast, white balance, highlights/shadows via `set_basic_adjustments`.\n\
+                     1. Ensure photos are open (`list_sessions` or `open_photos`). If multiple photos are open, process them ONE BY ONE (`switch_session` -> understand -> grade -> verify -> next photo); never blindly `sync_adjustments` across different scenes.\n\
+                     2. Inspect the active photo with BOTH `get_image_analysis` (RGB histograms, shadow/midtone/highlight zones, `near_black_ratio`, `color_cast_hint`) and `render_preview`. Briefly diagnose its lighting, shadows, highlights, and RGB balance before touching sliders.\n\
+                     3. Fix exposure, contrast, white balance, and shadow/highlight detail via `set_basic_adjustments`.\n\
                      4. Add stylistic layers (`curves`, `hsl`, `colorGrading`, etc.) via `add_layer`.\n\
-                     5. Call `render_preview` and `get_image_analysis` again to verify there is no unwanted highlight/shadow clipping.\n\
+                     5. Call `render_preview` and `get_image_analysis` again to verify shadow detail is preserved and there is no unwanted highlight/shadow clipping.\n\
                      6. Optionally call `set_view(compare_mode: \"split\")` so the user can compare before & after."
                 )
             }
