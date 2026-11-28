@@ -13,7 +13,7 @@ import { useSize } from '../motion'
 // MARK: - 基础调整
 
 export function BasicPanel({ basic }: { basic: BasicSettings }) {
-  const [tab, setTab] = useState(0)
+  const tab = useDoc((d) => d.activeBasicTab)
   const eyedropper = useDoc((d) => d.eyedropper)
   const set = (patch: Partial<BasicSettings>) => doc.setBasic(patch)
   const row = (title: string, key: keyof BasicSettings, range: [number, number], help: string, extra: Partial<Parameters<typeof ScrubRow>[0]> = {}) => (
@@ -25,7 +25,7 @@ export function BasicPanel({ basic }: { basic: BasicSettings }) {
     </div>
   )
   return (
-    <Pager tabs={[L('光影', 'Light'), L('色彩', 'Color'), L('质感', 'Texture'), L('效果', 'Effects'), L('校准', 'Calibrate')]} selection={tab} onSelect={setTab}>
+    <Pager tabs={[L('光影', 'Light'), L('色彩', 'Color'), L('质感', 'Texture'), L('效果', 'Effects'), L('校准', 'Calibrate')]} selection={tab} onSelect={(t) => doc.setActiveBasicTab(t)}>
       {(page) => {
         switch (page) {
           case 0:

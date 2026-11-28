@@ -1,6 +1,7 @@
 //! Lumen 的 Rust 部分：只负责和系统打交道 —— 读写文件、解码 WebView 不认识的图片（TIFF、相机 RAW）、写 16 位 TIFF。
 //! 所有调色计算都在网页里用 WebGL 完成（和 Mac 版的 Core Image 管线一一对应）。
 
+mod ipc;
 mod raw;
 
 use std::io::BufWriter;
@@ -112,9 +113,29 @@ fn write_tiff16(request: Request<'_>) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![read_file, write_file, decode_image, raw_decode, raw_extensions, write_tiff16])
-        .run(tauri::generate_context!())
-        .expect("error while running Lumen");
+        .manage(ipc::McpBridgeState::default())
+        .invoke_handler(tauri::generate_handler![
+            read_file,
+            write_file,
+            decode_image,
+            raw_decode,
+            raw_extensions,
+            write_tiff16,
+            ipc::mcp_ready,
+            ipc::mcp_respond
+        ])
+        .setup(|app| {
+            ipc::start_ipc_server(app.handle().clone());
+            Ok(())
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building Lumen");
+
+    app.run(|_app_handle, event| {
+        if let tauri::RunEvent::Exit = event {
+            ipc::cleanup_ipc_info();
+        }
+    });
 }

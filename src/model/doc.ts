@@ -130,6 +130,7 @@ export class EditDocument {
   showExportSheet = false
   showInspector = true
   showSidebar = true
+  activeBasicTab = 0
   eyedropper: Eyedropper | null = null
   dropHover = false
   /** 显示“正在加载”时的提示 */
@@ -205,8 +206,8 @@ export class EditDocument {
   }
 
   /** 打开照片：不会覆盖正在编辑的照片，而是加到胶片条里 */
-  async open(files: P.PickedFile[]) {
-    if (!files.length || !this.renderer) return
+  async open(files: P.PickedFile[]): Promise<string[]> {
+    if (!files.length || !this.renderer) return []
     this.isLoading = true
     this.emit()
     const loaded: PhotoSession[] = []
@@ -250,7 +251,7 @@ export class EditDocument {
           : L('打不开这张图片', "Couldn't open this image"),
       )
       this.emit()
-      return
+      return []
     }
     const previous = this.active
     this.stashActive()
@@ -260,6 +261,7 @@ export class EditDocument {
     this.activate(first, true)
     // 上一张照片有调整的话，询问是否沿用
     if (previous && !stateIsDefault(previous.state)) this.offerApply(previous)
+    return loaded.map((s) => s.id)
   }
 
   /** 打开一张 RAW：Rust 端冲洗一次，同时拿到预览（2200）和缩略图源（280）两种尺寸 */
@@ -926,7 +928,7 @@ export class EditDocument {
     return path ? this.renderer?.luts.get(path) ?? null : null
   }
 
-  private async ensureLUTsLoaded(s: EditState) {
+  async ensureLUTsLoaded(s: EditState) {
     for (const l of s.layers) {
       const path = l.kind === 'lut' ? l.params.lut.path : null
       if (path && !this.renderer?.luts.has(path) && P.isTauri) {
@@ -972,6 +974,55 @@ export class EditDocument {
     this.emit()
   }
 
+  setActiveBasicTab(tab: number) {
+    const next = Math.max(0, Math.min(4, Math.round(tab)))
+    if (this.activeBasicTab === next) return
+    this.activeBasicTab = next
+    this.emit()
+  }
+
+  sessionSummaries() {
+    return this.sessions.map((s) => ({
+      id: s.id,
+      name: s.name,
+      path: s.file.path ?? null,
+      width: s.width,
+      height: s.height,
+      edited: s.id === this.activeID ? !stateIsDefault(this.state) : !stateIsDefault(s.state),
+    }))
+  }
+
+  applyEditState(next: EditState, triggerSweep = false) {
+    const normalized = normalizeState(next)
+    if (triggerSweep) this.sweepToken++
+    this.setState(normalized)
+    void this.ensureLUTsLoaded(normalized)
+  }
+
+  async renderPreviewJPEG(maxSide = 1024): Promise<{ width: number; height: number; bytes: Uint8Array; base64: string } | null> {
+    const s = this.active
+    const r = this.renderer
+    if (!s || !r) return null
+    const scale = Math.min(1, maxSide / Math.max(s.width, s.height))
+    const w = Math.max(1, Math.round(s.width * scale))
+    const h = Math.max(1, Math.round(s.height * scale))
+    const px = r.renderPixels(s.preview, this.state, {
+      refWidth: w, refHeight: h, originX: 0, originY: 0,
+      srcRect: { x: 0, y: 0, w: s.width, h: s.height },
+      outWidth: w, outHeight: h,
+    }, 8) as Uint8Array
+    const canvas = new OffscreenCanvas(w, h)
+    canvas.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(px), w, h), 0, 0)
+    const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.9 })
+    const bytes = new Uint8Array(await blob.arrayBuffer())
+    let bin = ''
+    const chunk = 0x8000
+    for (let i = 0; i < bytes.length; i += chunk) {
+      bin += String.fromCharCode(...bytes.subarray(i, i + chunk))
+    }
+    return { width: w, height: h, bytes, base64: btoa(bin) }
+  }
+
   // MARK: - 导出
 
   async export(format: ExportFormat, quality: number, maxSide: number | null) {
@@ -981,6 +1032,13 @@ export class EditDocument {
     const ext = formatExt[format]
     const path = await P.pickSavePath(`${this.fileName}-Lumen.${ext}`, ext, L('导出照片', 'Export Photo'))
     if (!path) return
+    await this.exportToPath(path, format, quality, maxSide)
+  }
+
+  async exportToPath(path: string, format: ExportFormat, quality: number, maxSide: number | null): Promise<void> {
+    const s = this.active
+    const r = this.renderer
+    if (!s || !r) throw new Error('No photo open')
     this.isExporting = true
     this.showExportSheet = false
     this.emit()
@@ -1037,15 +1095,24 @@ export class EditDocument {
     if (!r) return
     const path = await P.pickSavePath(`${this.fileName}-Lumen.cube`, 'cube', L('LUT 只包含颜色和明暗，不包含清晰度、锐化、暗角、颗粒、阴影/高光、HDR 等局部效果', 'The LUT contains color and tone only — not clarity, sharpening, vignette, grain, shadows/highlights, HDR or other local effects'))
     if (!path) return
+    try {
+      await this.exportLUTToPath(path, 33)
+    } catch {}
+  }
+
+  async exportLUTToPath(path: string, size = 33) {
+    const r = this.renderer
+    if (!r) throw new Error('No renderer available')
     let message = L('LUT 已导出', 'LUT exported')
     try {
-      const size = 33
       const data = r.buildLUT(this.state, size)
       await P.writeText(path, writeCube(data, size, P.baseName(path)))
+      this.showToast(message)
     } catch (e: any) {
       message = L(`导出失败：${e?.message ?? e}`, `Export failed: ${e?.message ?? e}`)
+      this.showToast(message)
+      throw e
     }
-    this.showToast(message)
   }
 
   // MARK: - 提示

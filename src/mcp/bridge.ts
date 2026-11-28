@@ -1,0 +1,404 @@
+import { colorStatsOf, sampleColor } from '../engine/analysis'
+import { neutralizingWhiteBalance } from '../engine/colormath'
+import { L } from '../i18n'
+import { doc, ExportFormat } from '../model/doc'
+import { builtInPresets } from '../model/presets'
+import {
+  defaultBasic, EditState, hexString, LayerKind, newLayer, normalizeState, uuid,
+} from '../model/types'
+import * as P from '../platform'
+
+interface McpRequestPayload {
+  id: string
+  method: string
+  params?: Record<string, any>
+}
+
+const BASIC_TABS: Record<string, number> = {
+  exposure: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0,
+  temperature: 1, tint: 1, vibrance: 1, saturation: 1,
+  texture: 2, clarity: 2, dehaze: 2, sharpen: 2, noiseReduction: 2,
+  vignette: 3, grain: 3, grainSize: 3,
+  shadowTint: 4, redHue: 4, redSaturation: 4, greenHue: 4, greenSaturation: 4, blueHue: 4, blueSaturation: 4,
+}
+
+function basicTabForKeys(keys: string[]): number | null {
+  for (const k of keys) {
+    if (k in BASIC_TABS) return BASIC_TABS[k]
+  }
+  return null
+}
+
+function mergePlain(base: any, patch: any): any {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return patch
+  const out: Record<string, any> = { ...(base && typeof base === 'object' ? base : {}) }
+  for (const [k, v] of Object.entries(patch)) {
+    if (v && typeof v === 'object' && !Array.isArray(v) && out[k] && typeof out[k] === 'object' && !Array.isArray(out[k])) {
+      out[k] = mergePlain(out[k], v)
+    } else {
+      out[k] = v
+    }
+  }
+  return out
+}
+
+function downsample16(arr: number[]): number[] {
+  if (arr.length < 16) return arr
+  const step = Math.floor(arr.length / 16)
+  const out: number[] = []
+  for (let i = 0; i < 16; i++) {
+    let sum = 0
+    for (let j = i * step; j < (i + 1) * step; j++) sum += arr[j] ?? 0
+    out.push(sum / step)
+  }
+  return out
+}
+
+function requireImage() {
+  if (!doc.hasImage) throw new Error('No photo open')
+}
+
+async function waitForPreview(ms = 1200): Promise<void> {
+  const start = Date.now()
+  while (!doc.previewImage && Date.now() - start < ms) {
+    await new Promise((r) => setTimeout(r, 40))
+  }
+}
+
+async function dispatch(method: string, params: Record<string, any>): Promise<any> {
+  switch (method) {
+    case 'ping':
+      return {
+        status: 'ok',
+        hasImage: doc.hasImage,
+        activeSession: doc.activeID,
+        fileName: doc.fileName,
+      }
+
+    case 'open_photos': {
+      const paths = params.paths
+      if (!Array.isArray(paths) || !paths.length) throw new Error("Missing 'paths' array")
+      const files: P.PickedFile[] = paths.map((p: string) => ({ name: P.fileName(p), path: p }))
+      const ids = await doc.open(files)
+      if (!ids.length) throw new Error('Failed to open any image from provided paths')
+      await waitForPreview()
+      return { opened_ids: ids, sessions: doc.sessionSummaries() }
+    }
+
+    case 'list_sessions':
+      return { sessions: doc.sessionSummaries(), active_id: doc.activeID }
+
+    case 'switch_session': {
+      const sid = params.session_id
+      if (typeof sid !== 'string' || !doc.filmstrip.some((f) => f.id === sid)) {
+        throw new Error('Session not found')
+      }
+      doc.switchTo(sid)
+      return { active_id: sid }
+    }
+
+    case 'close_session': {
+      const sid = typeof params.session_id === 'string' ? params.session_id : doc.activeID
+      if (!sid || !doc.filmstrip.some((f) => f.id === sid)) throw new Error('Session not found')
+      doc.closeSession(sid)
+      return { closed_id: sid }
+    }
+
+    case 'get_edit_state':
+      requireImage()
+      return {
+        state: doc.state,
+        selected_layer_id: doc.selectedLayerID,
+        active_basic_tab: doc.activeBasicTab,
+        compare_mode: doc.compareMode,
+        zoom: doc.zoom,
+      }
+
+    case 'set_basic_adjustments': {
+      requireImage()
+      const patch = (params.params && typeof params.params === 'object' ? params.params : params) as Record<string, any>
+      const resetOthers = Boolean(params.reset_others)
+      const base = resetOthers ? defaultBasic() : doc.state.basic
+      const nextBasic = { ...base }
+      for (const [k, v] of Object.entries(patch)) {
+        if (k in nextBasic && typeof v === 'number') {
+          (nextBasic as any)[k] = v
+        }
+      }
+      const tab = basicTabForKeys(Object.keys(patch))
+      doc.selectLayer(null)
+      if (tab !== null) doc.setActiveBasicTab(tab)
+      doc.setBasic(nextBasic)
+      const summary = Object.keys(patch).filter((k) => k !== 'reset_others').sort().slice(0, 3).join(', ')
+      doc.showToast(`AI · ${L('调整基础参数', 'Basic')}: ${summary}`)
+      return { basic: doc.state.basic, active_basic_tab: doc.activeBasicTab }
+    }
+
+    case 'reset_adjustments': {
+      requireImage()
+      const scope = params.scope === 'basic' ? 'basic' : 'all'
+      if (scope === 'basic') {
+        doc.resetBasic()
+        doc.selectLayer(null)
+      } else {
+        doc.resetAll()
+      }
+      doc.showToast(`AI · ${L('重置调整', 'Reset')}`)
+      return { reset: scope }
+    }
+
+    case 'add_layer': {
+      requireImage()
+      const kind = params.kind as LayerKind
+      if (!kind) throw new Error("Invalid or missing 'kind'")
+      const layer = newLayer(kind)
+      const sameCount = doc.state.layers.filter((l) => l.kind === kind).length
+      if (typeof params.name === 'string' && params.name.length) layer.name = params.name
+      else if (sameCount > 0) layer.name = `${layer.name} ${sameCount + 1}`
+      if (typeof params.opacity === 'number') layer.opacity = Math.max(0, Math.min(100, params.opacity))
+      if (typeof params.visible === 'boolean') layer.visible = params.visible
+      if (params.params && typeof params.params === 'object') {
+        (layer.params as any)[kind] = mergePlain((layer.params as any)[kind], params.params)
+      }
+      if (kind === 'equalize' && !layer.params.equalize.curve.length) {
+        layer.params.equalize.curve = doc.equalizeCurve()
+      }
+      const nextLayers = [...doc.state.layers]
+      if (typeof params.index === 'number' && params.index >= 0 && params.index <= nextLayers.length) {
+        nextLayers.splice(params.index, 0, layer)
+      } else if (doc.selectedLayerID) {
+        const idx = nextLayers.findIndex((l) => l.id === doc.selectedLayerID)
+        if (idx >= 0) nextLayers.splice(idx + 1, 0, layer)
+        else nextLayers.push(layer)
+      } else {
+        nextLayers.push(layer)
+      }
+      doc.setState({ ...doc.state, layers: nextLayers })
+      doc.selectLayer(layer.id)
+      if (kind === 'lut' && layer.params.lut.path) {
+        await doc.ensureLUTsLoaded(doc.state)
+      }
+      doc.showToast(`AI · ${L('添加图层', 'Added')} 「${layer.name}」`)
+      return { layer: doc.state.layers.find((l) => l.id === layer.id) ?? layer }
+    }
+
+    case 'update_layer': {
+      requireImage()
+      const lid = params.layer_id
+      const existing = doc.state.layers.find((l) => l.id === lid)
+      if (!existing) throw new Error('Layer not found')
+      doc.updateLayer(lid, (l) => {
+        const next = { ...l, params: { ...l.params } }
+        if (typeof params.name === 'string') next.name = params.name
+        if (typeof params.visible === 'boolean') next.visible = params.visible
+        if (typeof params.opacity === 'number') next.opacity = Math.max(0, Math.min(100, params.opacity))
+        if (params.params && typeof params.params === 'object') {
+          (next.params as any)[l.kind] = mergePlain((l.params as any)[l.kind], params.params)
+        }
+        return next
+      })
+      doc.selectLayer(lid)
+      if (existing.kind === 'lut') await doc.ensureLUTsLoaded(doc.state)
+      const updated = doc.state.layers.find((l) => l.id === lid) ?? existing
+      doc.showToast(`AI · ${L('更新图层', 'Updated')} 「${updated.name}」`)
+      return { layer: updated }
+    }
+
+    case 'layer_action': {
+      requireImage()
+      const lid = params.layer_id
+      const action = params.action
+      if (!doc.state.layers.some((l) => l.id === lid)) throw new Error('Layer not found')
+      switch (action) {
+        case 'delete': doc.deleteLayer(lid); break
+        case 'duplicate': doc.duplicateLayer(lid); break
+        case 'move_up': doc.moveLayer(lid, true); break
+        case 'move_down': doc.moveLayer(lid, false); break
+        case 'select': doc.selectLayer(lid); break
+        default: throw new Error(`Unknown layer action '${action}'`)
+      }
+      return { ok: true, layers_count: doc.state.layers.length }
+    }
+
+    case 'apply_preset': {
+      requireImage()
+      if (typeof params.preset_key === 'string') {
+        const preset = builtInPresets().find((p) => p.key === params.preset_key)
+        if (!preset) throw new Error('Unknown preset_key')
+        doc.applyBuiltInPreset(preset)
+        doc.showToast(`AI · ${L('套用风格', 'Applied')} 「${preset.name}」`)
+        return { preset: preset.key, state: doc.state }
+      }
+      if (typeof params.preset_path === 'string') {
+        const text = await P.readText({ name: P.fileName(params.preset_path), path: params.preset_path })
+        const parsed = normalizeState(JSON.parse(text) as EditState)
+        parsed.layers.forEach((l) => (l.id = uuid()))
+        doc.applyEditState(parsed, true)
+        doc.showToast(`AI · ${L('已套用预设', 'Preset applied')}`)
+        return { preset_path: params.preset_path, state: doc.state }
+      }
+      throw new Error("Specify 'preset_key' or 'preset_path'")
+    }
+
+    case 'sync_adjustments': {
+      requireImage()
+      if (Array.isArray(params.target_session_ids)) {
+        for (const id of params.target_session_ids) {
+          if (typeof id === 'string') doc.applyCurrent(id)
+        }
+        return { synced: params.target_session_ids.length }
+      }
+      doc.applyCurrentToAll()
+      return { synced: Math.max(0, doc.filmstrip.length - 1) }
+    }
+
+    case 'undo':
+      if (!doc.canUndo) throw new Error('Nothing to undo')
+      doc.undo()
+      doc.showToast(`AI · ${L('撤销', 'Undo')}`)
+      return { can_undo: doc.canUndo, can_redo: doc.canRedo }
+
+    case 'redo':
+      if (!doc.canRedo) throw new Error('Nothing to redo')
+      doc.redo()
+      doc.showToast(`AI · ${L('重做', 'Redo')}`)
+      return { can_undo: doc.canUndo, can_redo: doc.canRedo }
+
+    case 'set_view': {
+      if (params.compare_mode === 'split' || params.compare_mode === 'off') {
+        doc.set('compareMode', params.compare_mode)
+      }
+      if (typeof params.split_position === 'number') {
+        doc.set('splitPosition', Math.min(0.98, Math.max(0.02, params.split_position)))
+      }
+      if (typeof params.show_original === 'boolean') {
+        doc.set('showOriginal', params.show_original)
+      }
+      if (typeof params.show_inspector === 'boolean') {
+        doc.set('showInspector', params.show_inspector)
+      }
+      if (typeof params.zoom === 'string') {
+        if (params.zoom === 'fit') doc.zoomToFit()
+        else if (params.zoom === '100%' || params.zoom === 'actual') doc.toggleActualSize()
+      } else if (typeof params.zoom === 'number') {
+        doc.setZoom(params.zoom)
+      }
+      return {
+        compare_mode: doc.compareMode,
+        split_position: doc.splitPosition,
+        show_original: doc.showOriginal,
+        zoom: doc.zoom,
+      }
+    }
+
+    case 'get_image_analysis': {
+      requireImage()
+      await waitForPreview()
+      const res: Record<string, any> = {
+        file_name: doc.fileName,
+        width: doc.imageSize.width,
+        height: doc.imageSize.height,
+      }
+      if (doc.histogram) {
+        res.clip_low_ratio = doc.histogram.clipLow
+        res.clip_high_ratio = doc.histogram.clipHigh
+        res.histogram_luma_16bins = downsample16(doc.histogram.luma)
+      }
+      if (doc.previewImage) {
+        const stats = colorStatsOf(doc.previewImage)
+        res.ycbcr_mean = stats.mean
+        res.ycbcr_std = stats.std
+      }
+      return res
+    }
+
+    case 'sample_color': {
+      requireImage()
+      if (typeof params.x !== 'number' || typeof params.y !== 'number') {
+        throw new Error("Missing 'x' and 'y' in 0...1")
+      }
+      await waitForPreview()
+      const src = params.source === 'original' ? doc.originalImage : doc.previewImage
+      if (!src) throw new Error('Image not rendered yet')
+      const c = sampleColor(src, params.x, params.y)
+      return { r: c.r, g: c.g, b: c.b, hex: hexString(c) }
+    }
+
+    case 'auto_white_balance': {
+      requireImage()
+      if (!doc.originalImage) throw new Error('Image not rendered yet')
+      if (typeof params.x !== 'number' || typeof params.y !== 'number') {
+        throw new Error("Missing 'x' and 'y' in 0...1")
+      }
+      const c = sampleColor(doc.originalImage, params.x, params.y)
+      const [temperature, tint] = neutralizingWhiteBalance(c)
+      doc.selectLayer(null)
+      doc.setActiveBasicTab(1)
+      doc.setBasic({ temperature, tint })
+      doc.showToast(`AI · ${L('白平衡校准', 'White Balance')} (${Math.round(temperature)}, ${Math.round(tint)})`)
+      return { temperature, tint, sampled_hex: hexString(c) }
+    }
+
+    case 'render_preview': {
+      requireImage()
+      const maxSide = typeof params.max_side === 'number' ? params.max_side : 1024
+      const rendered = await doc.renderPreviewJPEG(maxSide)
+      if (!rendered) throw new Error('Failed to render preview')
+      const out: Record<string, any> = {
+        width: rendered.width,
+        height: rendered.height,
+        mime_type: 'image/jpeg',
+        base64: rendered.base64,
+      }
+      if (typeof params.output_path === 'string' && params.output_path.length) {
+        await P.writeBytes(params.output_path, rendered.bytes)
+        out.output_path = params.output_path
+      }
+      return out
+    }
+
+    case 'export_photo': {
+      requireImage()
+      const outPath = params.output_path
+      if (typeof outPath !== 'string' || !outPath.length) throw new Error("Missing 'output_path'")
+      const fmtStr = String(params.format ?? 'jpeg').toUpperCase()
+      const format: ExportFormat =
+        fmtStr === 'PNG' || fmtStr === 'WEBP' || fmtStr === 'TIFF' ? fmtStr : 'JPEG'
+      const quality = typeof params.quality === 'number' ? params.quality : 0.92
+      const maxSide = typeof params.max_side === 'number' ? params.max_side : null
+      await doc.exportToPath(outPath, format, quality, maxSide)
+      return { output_path: outPath, format }
+    }
+
+    case 'export_lut': {
+      requireImage()
+      const outPath = params.output_path
+      if (typeof outPath !== 'string' || !outPath.length) throw new Error("Missing 'output_path'")
+      const size = typeof params.size === 'number' ? Math.round(params.size) : 33
+      await doc.exportLUTToPath(outPath, size)
+      return { output_path: outPath, size }
+    }
+
+    default:
+      throw new Error(`Unknown method: ${method}`)
+  }
+}
+
+export async function initMcpBridge(): Promise<() => void> {
+  if (!P.isTauri) return () => {}
+  const [{ invoke }, { listen }] = await Promise.all([
+    import('@tauri-apps/api/core'),
+    import('@tauri-apps/api/event'),
+  ])
+  const unlisten = await listen<McpRequestPayload>('lumen-mcp-request', async (event) => {
+    const { id, method, params } = event.payload
+    try {
+      const result = await dispatch(method, params ?? {})
+      await invoke('mcp_respond', { id, ok: true, result, error: null })
+    } catch (e: any) {
+      await invoke('mcp_respond', { id, ok: false, result: null, error: String(e?.message ?? e) })
+    }
+  })
+  await invoke('mcp_ready')
+  return unlisten
+}

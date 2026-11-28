@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { bezier, spring, springTransition, tween } from './anim'
 import { L, Lang } from './i18n'
 import { doc, useDoc } from './model/doc'
+import { initMcpBridge } from './mcp/bridge'
 import { listenDragDrop } from './platform'
 import { CanvasView } from './ui/Canvas'
 import { ExportSheet } from './ui/ExportSheet'
@@ -55,11 +56,16 @@ function Main() {
 
   useEffect(() => {
     let un: (() => void) | undefined
+    let unMcp: (() => void) | undefined
     listenDragDrop({
       over: (inside) => doc.dropHover !== inside && doc.set('dropHover', inside),
       drop: (files) => doc.open(files),
     }).then((u) => (un = u))
-    return () => un?.()
+    initMcpBridge().then((u) => (unMcp = u))
+    return () => {
+      un?.()
+      unMcp?.()
+    }
   }, [])
 
   const colSpring = springTransition(['width'], spring(0.4, 0.86))

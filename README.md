@@ -163,3 +163,35 @@ npm run package    # 打包安装程序
 | Ctrl+= / Ctrl+- | 放大 / 缩小 |
 | \\ | 左右对比 |
 | Esc | 取消吸管 |
+
+### Live MCP Automation (`lumen-mcp.exe`)
+
+Lumen Windows includes a built-in **Model Context Protocol (MCP)** stdio server (`lumen-mcp.exe`) so AI assistants (Cursor, Claude Desktop, Claude Code, Codex, Antigravity) can control the live Lumen window in real time over localhost TCP IPC (`~/.lumen/lumen-win-ipc.json`).
+
+#### Build
+
+```powershell
+cd src-tauri
+cargo build --release --bin lumen --bin lumen-mcp
+```
+
+Both `lumen.exe` and `lumen-mcp.exe` are produced in `src-tauri/target/release/`.
+
+#### Configure in MCP Client
+
+```json
+{
+  "mcpServers": {
+    "lumen": {
+      "command": "C:\\path\\to\\Lumen\\lumen-mcp.exe"
+    }
+  }
+}
+```
+
+#### Available Tools (21)
+
+- **Sessions**: `open_photos`, `list_sessions`, `switch_session`, `close_session`
+- **Adjustments & Layers**: `get_edit_state`, `set_basic_adjustments`, `reset_adjustments`, `add_layer`, `update_layer`, `layer_action`, `apply_preset`, `sync_adjustments`, `undo`, `redo`
+- **View & Analysis**: `set_view`, `get_image_analysis`, `sample_color`, `auto_white_balance`
+- **Render & Export**: `render_preview`, `export_photo`, `export_lut`
