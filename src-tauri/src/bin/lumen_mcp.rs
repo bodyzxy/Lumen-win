@@ -53,8 +53,8 @@ fn find_lumen_executable() -> Option<PathBuf> {
     if cfg!(windows) {
         let mut dirs = Vec::new();
         if let Some(local) = std::env::var_os("LOCALAPPDATA") {
-            dirs.push(PathBuf::from(local).join("Lumen"));
-            dirs.push(PathBuf::from(local).join("Programs").join("Lumen"));
+            dirs.push(PathBuf::from(&local).join("Lumen"));
+            dirs.push(PathBuf::from(&local).join("Programs").join("Lumen"));
         }
         if let Some(pf) = std::env::var_os("ProgramFiles") {
             dirs.push(PathBuf::from(pf).join("Lumen"));
