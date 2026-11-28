@@ -1,7 +1,7 @@
 import {
-  Aperture, ArrowDown, ArrowLeftRight, ArrowRight, ArrowUp, Blend, Box, ChartColumn, Check, CircleEllipsis, CircleSlash,
-  CircleX, Columns2, Columns3, Contrast, Copy, Crop, Diff, Droplet, Droplets, Ellipsis, Eye, EyeOff, FlipHorizontal2, FlipVertical2,
-  Hexagon, Images, Layers3, LucideIcon, Minus, Palette, PanelLeft, PanelRight, Pipette, Plus, Redo2, Repeat, RotateCcw, RotateCw,
+  Aperture, ArrowDown, ArrowLeftRight, ArrowRight, ArrowUp, Bandage, Blend, Box, ChartColumn, Check, CircleEllipsis, CircleSlash,
+  CircleX, Columns2, Columns3, Contrast, Copy, Crop, Diff, Droplet, Droplets, Ellipsis, Eraser, Eye, EyeOff, FlipHorizontal2, FlipVertical2,
+  Hexagon, Images, Layers3, LucideIcon, Minus, Paintbrush, Palette, PanelLeft, PanelRight, Pipette, Plus, Redo2, RefreshCw, Repeat, RotateCcw, RotateCw,
   Scale, Search, SlidersHorizontal, Spline, SquareEqual, Sun, Undo2, X,
 } from 'lucide-react'
 import type { CSSProperties } from 'react'
@@ -46,6 +46,10 @@ const map: Record<string, { icon: LucideIcon; transform?: string }> = {
   'rotate.right': { icon: RotateCw },
   'flip.h': { icon: FlipHorizontal2 },
   'flip.v': { icon: FlipVertical2 },
+  paintbrush: { icon: Paintbrush },
+  eraser: { icon: Eraser },
+  bandage: { icon: Bandage },
+  'arrow.2.circlepath': { icon: RefreshCw },
   eye: { icon: Eye },
   'eye.slash': { icon: EyeOff },
   minus: { icon: Minus },

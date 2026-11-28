@@ -35,11 +35,12 @@ function ExportCard() {
   const [quality, setQuality] = useState(92)
   const [sizeOption, setSizeOption] = useState(0)
   const [batchAll, setBatchAll] = useState(false)
+  const [includeExifFrame, setIncludeExifFrame] = useState(false)
   const sizes: [string, number | null][] = [[L('原尺寸', 'Original'), null], ['3840', 3840], ['2048', 2048], ['1080', 1080]]
 
   const runExport = () => {
-    if (batchAll && filmCount > 1) doc.exportAll(format, quality / 100, sizes[sizeOption][1])
-    else doc.export(format, quality / 100, sizes[sizeOption][1])
+    if (batchAll && filmCount > 1) doc.exportAll(format, quality / 100, sizes[sizeOption][1], includeExifFrame)
+    else doc.export(format, quality / 100, sizes[sizeOption][1], includeExifFrame)
   }
 
   useEffect(() => {
@@ -104,6 +105,10 @@ function ExportCard() {
           />
         </div>
       )}
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 22px 14px 22px', cursor: 'pointer', fontSize: 11.5, color: 'var(--text2)' }}>
+        <input type="checkbox" checked={includeExifFrame} onChange={(e) => setIncludeExifFrame(e.target.checked)} />
+        <span>{L('EXIF 白边水印（相机型号 · 光圈 · 快门 · ISO）', 'EXIF Gallery Frame (Camera · Aperture · Shutter · ISO)')}</span>
+      </label>
       <div className="hairline-h" />
       <div style={{ display: 'flex', alignItems: 'center', padding: 18 }}>
         <GlassButton onClick={() => doc.set('showExportSheet', false)}>{L('取消', 'Cancel')}</GlassButton>

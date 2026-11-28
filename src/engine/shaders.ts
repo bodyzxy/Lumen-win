@@ -774,3 +774,95 @@ void main() {
   if (u_opacity < 0.999) o = mix(c, o, u_opacity);
   outColor = vec4(toLinear(clamp01(o)), 1.0);
 }`
+
+/** 污点修复 / 仿制 */
+export const FRAG_SPOT = COMMON + `
+uniform sampler2D u_src;
+uniform vec2 u_texSize;
+uniform vec2 u_origin;
+uniform vec2 u_refSize;
+uniform vec2 u_target;
+uniform vec2 u_source;
+uniform float u_radius;
+uniform float u_feather;
+uniform float u_opacity;
+void main() {
+  vec3 base = texture(u_src, v_uv).rgb;
+  vec2 p = u_origin + vec2(v_uv.x, 1.0 - v_uv.y) * u_texSize;
+  vec2 tgt = u_target * u_refSize;
+  float dist = length(p - tgt);
+  if (dist >= u_radius) { outColor = vec4(base, 1.0); return; }
+  float r0 = u_radius * max(0.05, 1.0 - u_feather);
+  float w = (1.0 - smoothstep2(r0, u_radius, dist)) * u_opacity;
+  vec2 deltaPx = (u_source - u_target) * u_refSize;
+  vec2 srcUV = clamp(v_uv + vec2(deltaPx.x, -deltaPx.y) / u_texSize, vec2(0.0), vec2(1.0));
+  vec3 patch = texture(u_src, srcUV).rgb;
+  outColor = vec4(mix(base, patch, w), 1.0);
+}`
+
+/** 图层蒙版混合（线性 / 径向 / 亮度范围 / 色彩范围 / 画笔） */
+export const FRAG_MASK_BLEND = COMMON + `
+uniform sampler2D u_bg;
+uniform sampler2D u_fg;
+uniform sampler2D u_maskTex;
+uniform int u_maskKind;
+uniform int u_invert;
+uniform vec2 u_texSize;
+uniform vec2 u_origin;
+uniform vec2 u_refSize;
+uniform vec4 u_m0;
+uniform vec4 u_m1;
+void main() {
+  vec3 bg = texture(u_bg, v_uv).rgb;
+  vec3 fg = texture(u_fg, v_uv).rgb;
+  vec2 fullUV = (u_origin + vec2(v_uv.x, 1.0 - v_uv.y) * u_texSize) / max(u_refSize, vec2(1.0));
+  float m = 1.0;
+  if (u_maskKind == 1) {
+    vec2 a = u_m0.xy, b = u_m0.zw;
+    vec2 ab = b - a;
+    float len2 = max(1e-5, dot(ab, ab));
+    m = 1.0 - clamp01(dot(fullUV - a, ab) / len2);
+  } else if (u_maskKind == 2) {
+    vec2 d = (fullUV - u_m0.xy) / max(u_m0.zw, vec2(0.02));
+    float dist = length(d);
+    float inner = max(0.0, 1.0 - max(0.02, u_m1.x));
+    m = 1.0 - smoothstep2(inner, 1.0, dist);
+  } else if (u_maskKind == 3) {
+    vec3 g = clamp01(toGamma(bg));
+    float y = lumaLin(g);
+    float lo = min(u_m0.x, u_m0.y), hi = max(u_m0.x, u_m0.y), f = max(0.005, u_m0.z);
+    m = smoothstep2(lo - f, lo + f * 0.25, y) * (1.0 - smoothstep2(hi - f * 0.25, hi + f, y));
+  } else if (u_maskKind == 4) {
+    vec3 g = clamp01(toGamma(bg));
+    float d = length(g - u_m0.xyz);
+    m = 1.0 - smoothstep2(u_m0.w, u_m0.w + max(0.015, u_m1.x), d);
+  } else if (u_maskKind == 5) {
+    m = texture(u_maskTex, vec2(fullUV.x, 1.0 - fullUV.y)).r;
+  }
+  if (u_invert != 0) m = 1.0 - m;
+  outColor = vec4(mix(bg, fg, clamp01(m)), 1.0);
+}`
+
+/** 高光提取（Bloom / Halation 共用） */
+export const FRAG_HIGHLIGHT_EXTRACT = COMMON + `
+uniform sampler2D u_src;
+uniform float u_thresh;
+uniform vec3 u_rgbScale;
+void main() {
+  vec3 c = clamp01(texture(u_src, v_uv).rgb);
+  vec3 hi = max(vec3(0.0), c * u_rgbScale - vec3(u_thresh));
+  outColor = vec4(hi, 1.0);
+}`
+
+/** 光晕合成（0 = Screen Bloom, 1 = Add Halation） */
+export const FRAG_GLOW_COMPOSITE = COMMON + `
+uniform sampler2D u_src;
+uniform sampler2D u_glow;
+uniform vec3 u_rgbScale;
+uniform int u_mode;
+void main() {
+  vec3 base = texture(u_src, v_uv).rgb;
+  vec3 glow = texture(u_glow, v_uv).rgb * u_rgbScale;
+  vec3 res = u_mode == 0 ? (vec3(1.0) - (vec3(1.0) - clamp01(base)) * (vec3(1.0) - clamp01(glow))) : (base + glow);
+  outColor = vec4(res, 1.0);
+}`

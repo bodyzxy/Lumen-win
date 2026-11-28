@@ -77,6 +77,8 @@ export function BasicPanel({ basic }: { basic: BasicSettings }) {
                 {row(L('暗角', 'Vignette'), 'vignette', [-100, 100], 'basic.vignette', { hint: [gray(0.96), gray(0.6), gray(0.15)] })}
                 {row(L('颗粒', 'Grain'), 'grain', [0, 100], 'basic.grain')}
                 {row(L('颗粒大小', 'Grain Size'), 'grainSize', [0, 100], 'basic.grainSize', { defaultValue: 25 })}
+                {row(L('光晕 Halation', 'Halation'), 'halation', [0, 100], 'basic.halation')}
+                {row(L('柔光 Bloom', 'Bloom'), 'bloom', [0, 100], 'basic.bloom')}
               </div>
             )
           case 4:
@@ -484,6 +486,8 @@ function CropPanel() {
         <GlassButton disabled={cropIsIdentity(crop)} onClick={() => doc.resetCrop()}>{L('重置', 'Reset')}</GlassButton>
       </div>
       <ScrubRow title={L('水平拉直', 'Straighten')} value={crop.straighten} onChange={(v) => doc.setCrop({ straighten: v })} range={[-45, 45]} defaultValue={0} decimals={1} suffix="°" />
+      <ScrubRow title={L('垂直透视', 'Vertical Keystone')} value={crop.perspectiveV} onChange={(v) => doc.setCrop({ perspectiveV: v })} range={[-45, 45]} defaultValue={0} decimals={1} />
+      <ScrubRow title={L('水平透视', 'Horizontal Keystone')} value={crop.perspectiveH} onChange={(v) => doc.setCrop({ perspectiveH: v })} range={[-45, 45]} defaultValue={0} decimals={1} />
       <div style={{ display: 'flex', padding: '12px 18px 0 18px' }}>
         <MicroLabel text="Aspect Ratio" />
       </div>

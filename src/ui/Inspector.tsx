@@ -2,9 +2,11 @@ import { ReactNode, useRef } from 'react'
 import { spring } from '../anim'
 import { L } from '../i18n'
 import { doc, useDoc } from '../model/doc'
-import { AdjustmentLayer, blendModes, blendModeTitle, kindEnglish, LayerParams, resetLayerParams } from '../model/types'
+import {
+  AdjustmentLayer, blendModes, blendModeTitle, cssColor, kindEnglish, LayerParams, maskIsActive, maskKinds, maskKindTitle, MaskKind, resetLayerParams,
+} from '../model/types'
 import { Icon, kindSymbol } from './icons'
-import { BareIcon, HelpBadge, HistogramPanel, NoteText, ScrubRow } from './kit'
+import { BareIcon, GlassButton, HelpBadge, HistogramPanel, NoteText, ScrubRow } from './kit'
 import { FocusSwap } from './motion'
 import { openMenuAt } from './overlays'
 import { BlackWhitePanel, ChannelMixerPanel, ColorBalancePanel, HSLPanel, HueSatPanel, PhotoFilterPanel, SelectiveColorPanel } from './panels/ColorPanels'
@@ -125,6 +127,7 @@ function LayerInspector({ layer }: { layer: AdjustmentLayer }) {
         </select>
       </div>
       <ScrubRow title={L('不透明度', 'Opacity')} value={layer.opacity} onChange={(v) => update((l) => ({ ...l, opacity: v }))} range={[0, 100]} defaultValue={100} help="opacity" suffix="%" />
+      <MaskInspector layer={layer} update={update} />
       <div className="hairline-h" />
       <div className="scroll-y" style={{ flex: 1, minHeight: 0 }}>
         <div style={{ opacity: layer.visible ? 1 : 0.45, transition: 'opacity 0.2s ease-out' }}>{panelFor(layer, setParams)}</div>
@@ -163,4 +166,88 @@ function panelFor(layer: AdjustmentLayer, setParams: <K extends keyof LayerParam
     case 'replaceColor': return <ReplaceColorPanel layerID={layer.id} params={p.replaceColor} set={setParams('replaceColor')} />
     case 'equalize': return <EqualizePanel layerID={layer.id} params={p.equalize} />
   }
+}
+
+function MaskInspector({ layer, update }: { layer: AdjustmentLayer; update: (fn: (l: AdjustmentLayer) => AdjustmentLayer) => void }) {
+  const eyedropper = useDoc((d) => d.eyedropper)
+  const brushErase = useDoc((d) => d.maskBrushErase)
+  const brushSize = useDoc((d) => d.maskBrushSize)
+  const brushHardness = useDoc((d) => d.maskBrushHardness)
+  const m = layer.mask
+  const setMask = (patch: Partial<typeof m>) => update((l) => ({ ...l, mask: { ...l.mask, ...patch } }))
+  const activeColorDrop = eyedropper?.kind === 'colorRangeMask' && eyedropper.layerID === layer.id
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 18px' }}>
+        <span style={{ fontSize: 12, color: 'var(--text2)' }}>{L('蒙版', 'Mask')}</span>
+        <span style={{ flex: 1 }} />
+        {maskIsActive(m) && (
+          <BareIcon
+            icon="arrow.2.circlepath"
+            size={24}
+            active={m.invert}
+            onClick={() => setMask({ invert: !m.invert })}
+            help={L('反转蒙版', 'Invert mask')}
+          />
+        )}
+        <select
+          value={m.kind}
+          onChange={(e) => setMask({ kind: e.target.value as MaskKind })}
+          style={{
+            fontSize: 12, color: 'var(--text)', background: 'var(--control)',
+            border: '0.5px solid var(--line)', borderRadius: 6, padding: '3px 8px', outline: 'none',
+          }}
+        >
+          {maskKinds.map((k) => (
+            <option key={k} value={k}>{maskKindTitle(k)}</option>
+          ))}
+        </select>
+      </div>
+      {m.kind === 'radial' && (
+        <ScrubRow title={L('羽化', 'Softness')} value={m.softness} onChange={(v) => setMask({ softness: v })} range={[0, 100]} defaultValue={55} />
+      )}
+      {m.kind === 'lumaRange' && (
+        <>
+          <ScrubRow title={L('最低亮度', 'Min Luma')} value={m.lumaMin} onChange={(v) => setMask({ lumaMin: v })} range={[0, 1]} defaultValue={0.55} decimals={2} />
+          <ScrubRow title={L('最高亮度', 'Max Luma')} value={m.lumaMax} onChange={(v) => setMask({ lumaMax: v })} range={[0, 1]} defaultValue={1} decimals={2} />
+          <ScrubRow title={L('过渡羽化', 'Falloff')} value={m.lumaFalloff} onChange={(v) => setMask({ lumaFalloff: v })} range={[0.01, 0.5]} defaultValue={0.15} decimals={2} />
+        </>
+      )}
+      {m.kind === 'colorRange' && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 18px' }}>
+            <span style={{ fontSize: 12, color: 'var(--text2)' }}>{L('目标色', 'Target Color')}</span>
+            <span style={{ flex: 1 }} />
+            <span style={{
+              width: 14, height: 14, borderRadius: '50%',
+              background: cssColor({ r: m.targetR, g: m.targetG, b: m.targetB }),
+              boxShadow: 'inset 0 0 0 0.6px var(--line-strong)',
+            }} />
+            <BareIcon
+              icon="eyedropper"
+              size={24}
+              active={activeColorDrop}
+              onClick={() => doc.setEyedropper(activeColorDrop ? null : { kind: 'colorRangeMask', layerID: layer.id })}
+              help={L('吸取目标颜色', 'Sample target color')}
+            />
+          </div>
+          <ScrubRow title={L('颜色容差', 'Tolerance')} value={m.colorTolerance} onChange={(v) => setMask({ colorTolerance: v })} range={[0.02, 1]} defaultValue={0.28} decimals={2} />
+          <ScrubRow title={L('边缘柔和', 'Softness')} value={m.colorSoftness} onChange={(v) => setMask({ colorSoftness: v })} range={[0.02, 1]} defaultValue={0.25} decimals={2} />
+        </>
+      )}
+      {m.kind === 'brush' && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 18px' }}>
+            <GlassButton prominent={!brushErase} onClick={() => doc.set('maskBrushErase', false)}>{L('画笔', 'Paint')}</GlassButton>
+            <GlassButton prominent={brushErase} onClick={() => doc.set('maskBrushErase', true)}>{L('橡皮', 'Erase')}</GlassButton>
+            <span style={{ flex: 1 }} />
+            <GlassButton disabled={!m.strokes.length} onClick={() => setMask({ strokes: [] })}>{L('清空', 'Clear')}</GlassButton>
+          </div>
+          <ScrubRow title={L('笔刷大小', 'Brush Size')} value={brushSize} onChange={(v) => doc.set('maskBrushSize', v)} range={[0.01, 0.25]} defaultValue={0.06} decimals={2} />
+          <ScrubRow title={L('硬度', 'Hardness')} value={brushHardness} onChange={(v) => doc.set('maskBrushHardness', v)} range={[0, 1]} defaultValue={0.5} decimals={2} />
+          <ScrubRow title={L('羽化', 'Feather')} value={m.feather} onChange={(v) => setMask({ feather: v })} range={[0, 100]} defaultValue={20} />
+        </>
+      )}
+    </div>
+  )
 }

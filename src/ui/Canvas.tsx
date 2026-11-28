@@ -3,7 +3,7 @@ import { animateSpring, bezier, spring, Spring, springTransition, tween } from '
 import { CM } from '../engine/colormath'
 import { L } from '../i18n'
 import { ApplyBanner, doc, eyedropperHint, FilmItem, useDoc } from '../model/doc'
-import { hexString, cssColor, RGBColor } from '../model/types'
+import { AdjustmentLayer, hexString, cssColor, RGBColor, uuid } from '../model/types'
 import { Bitmap } from './Bitmap'
 import { Icon } from './icons'
 import { BareIcon, GlassButton, TextLink } from './kit'
@@ -24,7 +24,11 @@ export function CanvasView() {
   const hasImage = useDoc((d) => d.hasImage)
   const imageSize = useDoc((d) => d.imageSize)
   const isCropping = useDoc((d) => d.isCropping)
+  const isSpotHealing = useDoc((d) => d.isSpotHealing)
   const crop = useDoc((d) => d.state.crop)
+  const selectedLayerID = useDoc((d) => d.selectedLayerID)
+  const layers = useDoc((d) => d.state.layers)
+  const selectedLayer = layers.find((l) => l.id === selectedLayerID) ?? null
   const preview = useDoc((d) => d.previewImage)
   const original = useDoc((d) => d.originalImage)
   const activeID = useDoc((d) => d.activeID)
@@ -148,6 +152,10 @@ export function CanvasView() {
         >
           <PhotoView key={activeID} id={activeID} edited={preview} original={original} width={w} height={h} />
           {isCropping && <CropOverlay x={crop.x} y={crop.y} width={crop.width} height={crop.height} stageW={w} stageH={h} />}
+          {!isCropping && isSpotHealing && <SpotHealOverlay stageW={w} stageH={h} />}
+          {!isCropping && !isSpotHealing && selectedLayer && (selectedLayer.mask.kind === 'linear' || selectedLayer.mask.kind === 'radial' || selectedLayer.mask.kind === 'brush') && (
+            <MaskOverlay layer={selectedLayer} stageW={w} stageH={h} />
+          )}
         </div>
       ) : isLoading ? (
         <Spinner style={{ position: 'absolute', left: stage.width / 2 - 9, top: stage.height / 2 - 9 }} />
@@ -684,6 +692,7 @@ function CanvasControlBar() {
   const canRedo = useDoc((d) => d.canRedo)
   const compare = useDoc((d) => d.compareMode)
   const isCropping = useDoc((d) => d.isCropping)
+  const isSpotHealing = useDoc((d) => d.isSpotHealing)
   const zoom = useDoc((d) => d.zoom)
   const percent = useDoc((d) => d.actualPercent)
   const divider = <span className="hairline-v" style={{ height: 16, margin: '0 4px' }} />
@@ -700,12 +709,23 @@ function CanvasControlBar() {
         onClick={() => {
           if (isCropping) doc.setActiveBasicTab(0)
           else {
+            doc.set('isSpotHealing', false)
             doc.selectLayer(null)
             doc.set('showInspector', true)
             doc.setActiveBasicTab(5)
           }
         }}
         help={L('裁剪与旋转', 'Crop & Straighten')}
+      />
+      <BareIcon
+        icon="bandage"
+        active={isSpotHealing}
+        onClick={() => {
+          const next = !isSpotHealing
+          doc.set('isSpotHealing', next)
+          if (next && isCropping) doc.setActiveBasicTab(0)
+        }}
+        help={L('污点修复画笔', 'Spot Heal')}
       />
       {divider}
       <BareIcon icon="minus" onClick={() => doc.setZoom(doc.zoom / 1.5, undefined, spring(0.45, 0.86))} help={L('缩小（Ctrl+-）', 'Zoom out (Ctrl+-)')} />
@@ -846,6 +866,174 @@ function CropOverlay({ x, y, width, height, stageW, stageH }: {
       {handle('tr', left + w, top, 'nesw-resize')}
       {handle('bl', left, top + h, 'nesw-resize')}
       {handle('br', left + w, top + h, 'nwse-resize')}
+    </div>
+  )
+}
+
+function SpotHealOverlay({ stageW, stageH }: { stageW: number; stageH: number }) {
+  const spots = useDoc((d) => d.state.spots)
+  const radius = useDoc((d) => d.spotBrushRadius)
+  const addSpot = (e: React.PointerEvent) => {
+    e.stopPropagation()
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / Math.max(1, stageW)))
+    const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / Math.max(1, stageH)))
+    const sx = x + 0.04 <= 0.96 ? x + 0.04 : Math.max(0.04, x - 0.04)
+    doc.update((s) => ({
+      ...s,
+      spots: [...s.spots, { id: uuid(), x, y, radius, sourceX: sx, sourceY: y, feather: 0.45, opacity: 100 }],
+    }))
+  }
+  const rPx = Math.max(6, radius * Math.max(stageW, stageH))
+  return (
+    <div data-nodrag onPointerDown={addSpot} style={{ position: 'absolute', inset: 0, cursor: 'crosshair', pointerEvents: 'auto' }}>
+      {spots.map((sp) => (
+        <div
+          key={sp.id}
+          onContextMenu={(e) => {
+            e.preventDefault(); e.stopPropagation()
+            doc.update((s) => ({ ...s, spots: s.spots.filter((x) => x.id !== sp.id) }))
+          }}
+          style={{
+            position: 'absolute',
+            left: sp.x * stageW - rPx,
+            top: sp.y * stageH - rPx,
+            width: rPx * 2,
+            height: rPx * 2,
+            borderRadius: '50%',
+            border: '1.5px solid rgba(255,255,255,0.85)',
+            boxShadow: '0 0 0 0.5px rgba(0,0,0,0.45)',
+          }}
+        />
+      ))}
+    </div>
+  )
+}
+
+function MaskOverlay({ layer, stageW, stageH }: { layer: AdjustmentLayer; stageW: number; stageH: number }) {
+  const m = layer.mask
+  const drag = useRef<string | null>(null)
+  const activeStroke = useRef<string | null>(null)
+  const updateMask = (patch: Partial<typeof m>) =>
+    doc.updateLayer(layer.id, (l) => ({ ...l, mask: { ...l.mask, ...patch } }))
+
+  const normPt = (e: React.PointerEvent) => {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    return {
+      x: Math.max(0, Math.min(1, (e.clientX - rect.left) / Math.max(1, stageW))),
+      y: Math.max(0, Math.min(1, (e.clientY - rect.top) / Math.max(1, stageH))),
+    }
+  }
+
+  if (m.kind === 'brush') {
+    return (
+      <div
+        data-nodrag
+        style={{ position: 'absolute', inset: 0, cursor: 'crosshair', pointerEvents: 'auto' }}
+        onPointerDown={(e) => {
+          e.stopPropagation()
+          ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+          const pt = normPt(e)
+          const sid = uuid()
+          activeStroke.current = sid
+          updateMask({
+            strokes: [...m.strokes, { id: sid, points: [pt], size: doc.maskBrushSize, hardness: doc.maskBrushHardness, erase: doc.maskBrushErase }],
+          })
+        }}
+        onPointerMove={(e) => {
+          if (!activeStroke.current) return
+          const pt = normPt(e)
+          const sid = activeStroke.current
+          doc.updateLayer(layer.id, (l) => ({
+            ...l,
+            mask: { ...l.mask, strokes: l.mask.strokes.map((st) => (st.id === sid ? { ...st, points: [...st.points, pt] } : st)) },
+          }))
+        }}
+        onPointerUp={() => { activeStroke.current = null }}
+      />
+    )
+  }
+
+  if (m.kind === 'linear') {
+    const x0 = m.startX * stageW, y0 = m.startY * stageH
+    const x1 = m.endX * stageW, y1 = m.endY * stageH
+    return (
+      <div
+        data-nodrag
+        style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
+        onPointerMove={(e) => {
+          if (!drag.current) return
+          const pt = normPt(e)
+          updateMask(drag.current === 'start' ? { startX: pt.x, startY: pt.y } : { endX: pt.x, endY: pt.y })
+        }}
+        onPointerUp={() => { drag.current = null }}
+      >
+        <svg width={stageW} height={stageH} style={{ position: 'absolute', inset: 0 }}>
+          <line x1={x0} y1={y0} x2={x1} y2={y1} stroke="rgba(255,255,255,0.85)" strokeWidth={1.2} strokeDasharray="4 3" />
+        </svg>
+        {(['start', 'end'] as const).map((k) => {
+          const px = k === 'start' ? x0 : x1, py = k === 'start' ? y0 : y1
+          return (
+            <div
+              key={k}
+              onPointerDown={(e) => {
+                e.stopPropagation()
+                ;(e.currentTarget.parentElement as HTMLElement).setPointerCapture(e.pointerId)
+                drag.current = k
+              }}
+              style={{
+                position: 'absolute', left: px - 6, top: py - 6, width: 12, height: 12, borderRadius: '50%',
+                background: k === 'start' ? '#fff' : '#222', border: '1.5px solid #fff',
+                boxShadow: '0 0 0 0.5px rgba(0,0,0,0.5)', cursor: 'grab', pointerEvents: 'auto',
+              }}
+            />
+          )
+        })}
+      </div>
+    )
+  }
+
+  // radial
+  const cx = m.centerX * stageW, cy = m.centerY * stageH
+  const rx = m.radiusX * stageW, ry = m.radiusY * stageH
+  return (
+    <div
+      data-nodrag
+      style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
+      onPointerMove={(e) => {
+        if (!drag.current) return
+        const pt = normPt(e)
+        if (drag.current === 'center') updateMask({ centerX: pt.x, centerY: pt.y })
+        else updateMask({ radiusX: Math.max(0.04, Math.min(0.95, Math.abs(pt.x - m.centerX))), radiusY: Math.max(0.04, Math.min(0.95, Math.abs(pt.y - m.centerY))) })
+      }}
+      onPointerUp={() => { drag.current = null }}
+    >
+      <div style={{
+        position: 'absolute', left: cx - rx, top: cy - ry, width: rx * 2, height: ry * 2,
+        borderRadius: '50%', border: '1.2px dashed rgba(255,255,255,0.85)',
+      }} />
+      <div
+        onPointerDown={(e) => {
+          e.stopPropagation()
+          ;(e.currentTarget.parentElement as HTMLElement).setPointerCapture(e.pointerId)
+          drag.current = 'center'
+        }}
+        style={{
+          position: 'absolute', left: cx - 6, top: cy - 6, width: 12, height: 12, borderRadius: '50%',
+          background: '#fff', boxShadow: '0 0 0 1px rgba(0,0,0,0.45)', cursor: 'move', pointerEvents: 'auto',
+        }}
+      />
+      <div
+        onPointerDown={(e) => {
+          e.stopPropagation()
+          ;(e.currentTarget.parentElement as HTMLElement).setPointerCapture(e.pointerId)
+          drag.current = 'edge'
+        }}
+        style={{
+          position: 'absolute', left: cx + rx - 5, top: cy - 5, width: 10, height: 10, borderRadius: '50%',
+          background: '#222', border: '1.5px solid #fff', cursor: 'ew-resize', pointerEvents: 'auto',
+        }}
+      />
     </div>
   )
 }

@@ -59,6 +59,8 @@ export interface BasicSettings {
   vignette: number
   grain: number // 0...100
   grainSize: number // 0...100
+  halation: number // 0...100
+  bloom: number // 0...100
   shadowTint: number
   redHue: number
   redSaturation: number
@@ -87,6 +89,8 @@ export const defaultBasic = (): BasicSettings => ({
   vignette: 0,
   grain: 0,
   grainSize: 25,
+  halation: 0,
+  bloom: 0,
   shadowTint: 0,
   redHue: 0,
   redSaturation: 0,
@@ -490,6 +494,95 @@ export const blendModeIndex = (m?: LayerBlendMode): number => {
   return i >= 0 ? i : 0
 }
 
+export type MaskKind = 'none' | 'linear' | 'radial' | 'lumaRange' | 'colorRange' | 'brush'
+
+export const maskKinds: MaskKind[] = ['none', 'linear', 'radial', 'lumaRange', 'colorRange', 'brush']
+
+export function maskKindTitle(k: MaskKind): string {
+  switch (k) {
+    case 'none': return L('无蒙版', 'None')
+    case 'linear': return L('线性渐变', 'Linear Gradient')
+    case 'radial': return L('径向渐变', 'Radial Gradient')
+    case 'lumaRange': return L('亮度范围', 'Luma Range')
+    case 'colorRange': return L('色彩范围', 'Color Range')
+    case 'brush': return L('手绘画笔', 'Brush')
+  }
+}
+
+export interface MaskPoint {
+  x: number
+  y: number
+}
+
+export interface MaskBrushStroke {
+  id: string
+  points: MaskPoint[]
+  size: number
+  hardness: number
+  erase: boolean
+}
+
+export interface LayerMask {
+  kind: MaskKind
+  invert: boolean
+  feather: number
+  startX: number
+  startY: number
+  endX: number
+  endY: number
+  centerX: number
+  centerY: number
+  radiusX: number
+  radiusY: number
+  softness: number
+  lumaMin: number
+  lumaMax: number
+  lumaFalloff: number
+  targetR: number
+  targetG: number
+  targetB: number
+  colorTolerance: number
+  colorSoftness: number
+  strokes: MaskBrushStroke[]
+}
+
+export const defaultMask = (): LayerMask => ({
+  kind: 'none',
+  invert: false,
+  feather: 20,
+  startX: 0.5,
+  startY: 0.0,
+  endX: 0.5,
+  endY: 0.65,
+  centerX: 0.5,
+  centerY: 0.5,
+  radiusX: 0.35,
+  radiusY: 0.35,
+  softness: 55,
+  lumaMin: 0.55,
+  lumaMax: 1.0,
+  lumaFalloff: 0.15,
+  targetR: 0.85,
+  targetG: 0.65,
+  targetB: 0.55,
+  colorTolerance: 0.28,
+  colorSoftness: 0.25,
+  strokes: [],
+})
+
+export const maskIsActive = (m?: LayerMask) => !!m && m.kind !== 'none'
+
+export interface SpotPatch {
+  id: string
+  x: number
+  y: number
+  radius: number
+  sourceX: number
+  sourceY: number
+  feather: number
+  opacity: number
+}
+
 export interface AdjustmentLayer {
   id: string
   kind: LayerKind
@@ -497,6 +590,7 @@ export interface AdjustmentLayer {
   visible: boolean
   opacity: number // 0...100
   blendMode: LayerBlendMode
+  mask: LayerMask
   params: LayerParams
 }
 
@@ -507,6 +601,7 @@ export const newLayer = (kind: LayerKind): AdjustmentLayer => ({
   visible: true,
   opacity: 100,
   blendMode: 'normal',
+  mask: defaultMask(),
   params: defaultParams(),
 })
 
@@ -531,7 +626,7 @@ export function resetLayerParams(layer: AdjustmentLayer): AdjustmentLayer {
     default:
       ;(p as any)[layer.kind] = (fresh as any)[layer.kind]
   }
-  return { ...layer, params: p }
+  return { ...layer, visible: true, opacity: 100, blendMode: 'normal', mask: defaultMask(), params: p }
 }
 
 // MARK: - 裁剪与旋转拉直
@@ -545,6 +640,8 @@ export interface CropSettings {
   quarterTurns: number
   flipH: boolean
   flipV: boolean
+  perspectiveV: number
+  perspectiveH: number
 }
 
 export const defaultCrop = (): CropSettings => ({
@@ -556,6 +653,8 @@ export const defaultCrop = (): CropSettings => ({
   quarterTurns: 0,
   flipH: false,
   flipV: false,
+  perspectiveV: 0,
+  perspectiveH: 0,
 })
 
 export const cropIsIdentity = (c?: CropSettings): boolean => {
@@ -566,10 +665,18 @@ export const cropIsIdentity = (c?: CropSettings): boolean => {
     Math.abs(c.width - 1) < 1e-4 &&
     Math.abs(c.height - 1) < 1e-4 &&
     Math.abs(c.straighten) < 1e-3 &&
+    Math.abs(c.perspectiveV ?? 0) < 1e-2 &&
+    Math.abs(c.perspectiveH ?? 0) < 1e-2 &&
     ((c.quarterTurns % 4) + 4) % 4 === 0 &&
     !c.flipH &&
     !c.flipV
   )
+}
+
+export interface ExifInfo {
+  camera: string
+  lens: string
+  details: string
 }
 
 // MARK: - 整体编辑状态（撤销历史保存的就是它）
@@ -579,9 +686,10 @@ export interface EditState {
   /** 数组下标 0 是最底层，最后一个是最顶层（和 PS 一样，越上面越后计算） */
   layers: AdjustmentLayer[]
   crop: CropSettings
+  spots: SpotPatch[]
 }
 
-export const defaultState = (): EditState => ({ basic: defaultBasic(), layers: [], crop: defaultCrop() })
+export const defaultState = (): EditState => ({ basic: defaultBasic(), layers: [], crop: defaultCrop(), spots: [] })
 
 /** 深度比较（状态都是纯数据） */
 export function deepEqual(a: any, b: any): boolean {
@@ -600,13 +708,23 @@ export function deepEqual(a: any, b: any): boolean {
 }
 
 export const basicIsDefault = (b: BasicSettings) => deepEqual(b, defaultBasic())
-export const stateIsDefault = (s: EditState) => s.layers.length === 0 && basicIsDefault(s.basic) && cropIsIdentity(s.crop)
+export const stateIsDefault = (s: EditState) => s.layers.length === 0 && s.spots.length === 0 && basicIsDefault(s.basic) && cropIsIdentity(s.crop)
 
 /** 把读进来的预设补齐缺失字段（兼容 Mac 版导出的 JSON） */
 export function normalizeState(raw: any): EditState {
   const basic = { ...defaultBasic(), ...(raw?.basic ?? {}) }
   const crop: CropSettings = { ...defaultCrop(), ...(raw?.crop ?? {}) }
   crop.quarterTurns = ((Math.round(crop.quarterTurns) % 4) + 4) % 4
+  const spots: SpotPatch[] = (raw?.spots ?? []).map((sp: any) => ({
+    id: typeof sp?.id === 'string' ? sp.id : uuid(),
+    x: typeof sp?.x === 'number' ? sp.x : 0.5,
+    y: typeof sp?.y === 'number' ? sp.y : 0.5,
+    radius: typeof sp?.radius === 'number' ? sp.radius : 0.02,
+    sourceX: typeof sp?.sourceX === 'number' ? sp.sourceX : 0.54,
+    sourceY: typeof sp?.sourceY === 'number' ? sp.sourceY : 0.5,
+    feather: typeof sp?.feather === 'number' ? sp.feather : 0.45,
+    opacity: typeof sp?.opacity === 'number' ? sp.opacity : 100,
+  }))
   const layers: AdjustmentLayer[] = (raw?.layers ?? [])
     .filter((l: any) => allKinds.includes(l?.kind))
     .map((l: any) => {
@@ -618,6 +736,8 @@ export function normalizeState(raw: any): EditState {
       }
       params.gradientMap.stops = (params.gradientMap.stops ?? []).map((s: any) => ({ ...s, id: typeof s.id === 'string' ? s.id : uuid() }))
       const blendMode: LayerBlendMode = blendModes.includes(l.blendMode) ? l.blendMode : 'normal'
+      const mask: LayerMask = { ...defaultMask(), ...(l.mask ?? {}) }
+      if (!maskKinds.includes(mask.kind)) mask.kind = 'none'
       return {
         id: typeof l.id === 'string' ? l.id : uuid(),
         kind: l.kind,
@@ -625,10 +745,11 @@ export function normalizeState(raw: any): EditState {
         visible: l.visible !== false,
         opacity: typeof l.opacity === 'number' ? l.opacity : 100,
         blendMode,
+        mask,
         params,
       }
     })
-  return { basic, layers, crop }
+  return { basic, layers, crop, spots }
 }
 
 /** 描述一组调整的简短文字，例如“3 个调整图层 · 基础调整” */

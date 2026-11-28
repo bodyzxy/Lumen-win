@@ -4,7 +4,7 @@ import { L } from '../i18n'
 import { doc, ExportFormat } from '../model/doc'
 import { builtInPresets } from '../model/presets'
 import {
-  blendModes, defaultBasic, EditState, hexString, LayerBlendMode, LayerKind, newLayer, normalizeState, uuid,
+  blendModes, defaultBasic, EditState, hexString, LayerBlendMode, LayerKind, MaskKind, maskKinds, newLayer, normalizeState, SpotPatch, uuid,
 } from '../model/types'
 import * as P from '../platform'
 
@@ -458,8 +458,58 @@ async function dispatch(method: string, params: Record<string, any>): Promise<an
         fmtStr === 'PNG' || fmtStr === 'WEBP' || fmtStr === 'TIFF' ? fmtStr : 'JPEG'
       const quality = typeof params.quality === 'number' ? params.quality : 0.92
       const maxSide = typeof params.max_side === 'number' ? params.max_side : null
-      await doc.exportToPath(outPath, format, quality, maxSide)
-      return { output_path: outPath, format }
+      const exifFrame = params.exif_frame === true
+      await doc.exportToPath(outPath, format, quality, maxSide, exifFrame)
+      return { output_path: outPath, format, exif_frame: exifFrame }
+    }
+
+    case 'set_layer_mask': {
+      requireImage()
+      const lid = params.layer_id
+      const existing = doc.state.layers.find((l) => l.id === lid)
+      if (!existing) throw new Error('Layer not found')
+      doc.updateLayer(lid, (l) => {
+        const m = { ...l.mask }
+        if (typeof params.kind === 'string' && maskKinds.includes(params.kind as MaskKind)) m.kind = params.kind as MaskKind
+        if (typeof params.invert === 'boolean') m.invert = params.invert
+        if (typeof params.feather === 'number') m.feather = Math.max(0, Math.min(100, params.feather))
+        if (typeof params.start_x === 'number') m.startX = Math.max(0, Math.min(1, params.start_x))
+        if (typeof params.start_y === 'number') m.startY = Math.max(0, Math.min(1, params.start_y))
+        if (typeof params.end_x === 'number') m.endX = Math.max(0, Math.min(1, params.end_x))
+        if (typeof params.end_y === 'number') m.endY = Math.max(0, Math.min(1, params.end_y))
+        if (typeof params.center_x === 'number') m.centerX = Math.max(0, Math.min(1, params.center_x))
+        if (typeof params.center_y === 'number') m.centerY = Math.max(0, Math.min(1, params.center_y))
+        if (typeof params.radius_x === 'number') m.radiusX = Math.max(0.04, Math.min(0.95, params.radius_x))
+        if (typeof params.radius_y === 'number') m.radiusY = Math.max(0.04, Math.min(0.95, params.radius_y))
+        if (typeof params.softness === 'number') m.softness = Math.max(0, Math.min(100, params.softness))
+        if (typeof params.luma_min === 'number') m.lumaMin = Math.max(0, Math.min(1, params.luma_min))
+        if (typeof params.luma_max === 'number') m.lumaMax = Math.max(0, Math.min(1, params.luma_max))
+        if (typeof params.luma_falloff === 'number') m.lumaFalloff = Math.max(0.01, Math.min(0.5, params.luma_falloff))
+        if (typeof params.target_r === 'number') m.targetR = Math.max(0, Math.min(1, params.target_r))
+        if (typeof params.target_g === 'number') m.targetG = Math.max(0, Math.min(1, params.target_g))
+        if (typeof params.target_b === 'number') m.targetB = Math.max(0, Math.min(1, params.target_b))
+        if (typeof params.color_tolerance === 'number') m.colorTolerance = Math.max(0.02, Math.min(1, params.color_tolerance))
+        if (typeof params.color_softness === 'number') m.colorSoftness = Math.max(0.02, Math.min(1, params.color_softness))
+        return { ...l, mask: m }
+      })
+      doc.selectLayer(lid)
+      const updated = doc.state.layers.find((l) => l.id === lid)!
+      doc.showToast(`AI · ${L('设置蒙版', 'Mask')}`)
+      return { mask: updated.mask }
+    }
+
+    case 'add_spot_patch': {
+      requireImage()
+      if (typeof params.x !== 'number' || typeof params.y !== 'number') throw new Error("Missing 'x' and 'y'")
+      const x = Math.max(0, Math.min(1, params.x))
+      const y = Math.max(0, Math.min(1, params.y))
+      const radius = Math.max(0.005, Math.min(0.15, typeof params.radius === 'number' ? params.radius : 0.025))
+      const sourceX = typeof params.source_x === 'number' ? params.source_x : (x + 0.04 <= 0.96 ? x + 0.04 : Math.max(0.04, x - 0.04))
+      const sourceY = typeof params.source_y === 'number' ? params.source_y : y
+      const patch: SpotPatch = { id: uuid(), x, y, radius, sourceX, sourceY, feather: 0.45, opacity: 100 }
+      doc.update((s) => ({ ...s, spots: [...s.spots, patch] }))
+      doc.showToast(`AI · ${L('污点修复', 'Spot Heal')}`)
+      return { spot_count: doc.state.spots.length }
     }
 
     case 'set_crop': {
@@ -478,6 +528,8 @@ async function dispatch(method: string, params: Record<string, any>): Promise<an
         if (typeof params.quarter_turns === 'number') cur.quarterTurns = ((Math.round(params.quarter_turns) % 4) + 4) % 4
         if (typeof params.flip_h === 'boolean') cur.flipH = params.flip_h
         if (typeof params.flip_v === 'boolean') cur.flipV = params.flip_v
+        if (typeof params.perspective_v === 'number') cur.perspectiveV = Math.max(-45, Math.min(45, params.perspective_v))
+        if (typeof params.perspective_h === 'number') cur.perspectiveH = Math.max(-45, Math.min(45, params.perspective_h))
         doc.setCrop(cur)
       }
       doc.showToast(`AI · ${L('裁剪与旋转', 'Crop & Straighten')}`)
@@ -493,7 +545,8 @@ async function dispatch(method: string, params: Record<string, any>): Promise<an
         fmtStr === 'PNG' || fmtStr === 'WEBP' || fmtStr === 'TIFF' ? fmtStr : 'JPEG'
       const quality = typeof params.quality === 'number' ? params.quality : 0.92
       const maxSide = typeof params.max_side === 'number' ? params.max_side : null
-      const files = await doc.exportAllToDirectory(outDir, format, quality, maxSide)
+      const exifFrame = params.exif_frame === true
+      const files = await doc.exportAllToDirectory(outDir, format, quality, maxSide, exifFrame)
       return { output_dir: outDir, count: files.length, files }
     }
 

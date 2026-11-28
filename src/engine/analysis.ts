@@ -10,6 +10,10 @@ export interface Histogram {
   lumaCounts: number[]
   clipLow: number
   clipHigh: number
+  waveformR: number[]
+  waveformG: number[]
+  waveformB: number[]
+  vectorscope: number[]
 }
 
 export function histogramOf(px: Uint8Array | Uint8ClampedArray, w: number, h: number): Histogram {
@@ -17,21 +21,50 @@ export function histogramOf(px: Uint8Array | Uint8ClampedArray, w: number, h: nu
   const g = new Array(256).fill(0)
   const b = new Array(256).fill(0)
   const l = new Array(256).fill(0)
+  const wCols = 64, wRows = 32, vSize = 48
+  const wfR = new Array(wCols * wRows).fill(0)
+  const wfG = new Array(wCols * wRows).fill(0)
+  const wfB = new Array(wCols * wRows).fill(0)
+  const vec = new Array(vSize * vSize).fill(0)
   const n = w * h
-  for (let i = 0; i < n; i++) {
-    const rv = px[i * 4], gv = px[i * 4 + 1], bv = px[i * 4 + 2]
-    r[rv]++
-    g[gv]++
-    b[bv]++
-    l[Math.min(255, Math.floor(0.299 * rv + 0.587 * gv + 0.114 * bv))]++
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x
+      const rv = px[i * 4], gv = px[i * 4 + 1], bv = px[i * 4 + 2]
+      r[rv]++
+      g[gv]++
+      b[bv]++
+      l[Math.min(255, Math.floor(0.299 * rv + 0.587 * gv + 0.114 * bv))]++
+      const col = Math.min(wCols - 1, Math.floor((x * wCols) / Math.max(1, w)))
+      wfR[col * wRows + Math.min(wRows - 1, Math.floor((rv * wRows) / 256))]++
+      wfG[col * wRows + Math.min(wRows - 1, Math.floor((gv * wRows) / 256))]++
+      wfB[col * wRows + Math.min(wRows - 1, Math.floor((bv * wRows) / 256))]++
+      const [, cb, cr] = CM.toYCbCr(rv / 255, gv / 255, bv / 255)
+      const vx = Math.max(0, Math.min(vSize - 1, Math.floor((cb + 0.5) * vSize)))
+      const vy = Math.max(0, Math.min(vSize - 1, Math.floor((0.5 - cr) * vSize)))
+      vec[vy * vSize + vx]++
+    }
   }
   const norm = (a: number[]) => {
     let m = 1
     for (let i = 1; i < 255; i++) if (a[i] > m) m = a[i]
     return a.map((v) => Math.min(1, v / m))
   }
+  const normGrid = (a: number[], cap: number) => {
+    let m = 1
+    for (let i = 0; i < a.length; i++) if (a[i] > m) m = a[i]
+    m *= cap
+    return a.map((v) => Math.min(1, Math.sqrt(v / m)))
+  }
   const total = Math.max(1, n)
-  return { red: norm(r), green: norm(g), blue: norm(b), luma: norm(l), lumaCounts: l, clipLow: l[0] / total, clipHigh: l[255] / total }
+  return {
+    red: norm(r), green: norm(g), blue: norm(b), luma: norm(l), lumaCounts: l,
+    clipLow: l[0] / total, clipHigh: l[255] / total,
+    waveformR: normGrid(wfR, 0.45),
+    waveformG: normGrid(wfG, 0.45),
+    waveformB: normGrid(wfB, 0.45),
+    vectorscope: normGrid(vec, 0.35),
+  }
 }
 
 let scratch: OffscreenCanvas | null = null

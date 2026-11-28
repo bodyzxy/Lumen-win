@@ -1,4 +1,6 @@
-import { AdjustmentLayer, BasicSettings, blendModeIndex, EditState, isSpatial, LayerKind, levelsIsIdentity } from '../model/types'
+import {
+  AdjustmentLayer, BasicSettings, blendModeIndex, EditState, isSpatial, LayerKind, LayerMask, levelsIsIdentity, maskIsActive, MaskKind, SpotPatch,
+} from '../model/types'
 import { CM, CubeLUT, curveIsIdentity, curveTable, CURVE_TABLE, whiteBalanceGains } from './colormath'
 import * as S from './shaders'
 
@@ -56,6 +58,7 @@ export class Renderer {
   private tableTex: WebGLTexture
   private lutTex = new Map<string, WebGLTexture>()
   private emptyLut: WebGLTexture
+  private brushMaskTex: WebGLTexture
   luts = new Map<string, CubeLUT>()
 
   constructor() {
@@ -92,10 +95,16 @@ export class Renderer {
     gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA16F, 2, 2, 2, 0, gl.RGBA, gl.FLOAT, new Float32Array(32))
     this.setLinear(gl.TEXTURE_3D)
 
+    this.brushMaskTex = gl.createTexture()!
+    gl.bindTexture(gl.TEXTURE_2D, this.brushMaskTex)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]))
+    this.setLinear(gl.TEXTURE_2D)
+
     const programs: Record<string, string> = {
       input: S.FRAG_INPUT, copy: S.FRAG_COPY, blur: S.FRAG_BLUR, local: S.FRAG_LOCAL_CONTRAST,
       hs: S.FRAG_HIGHLIGHT_SHADOW, denoise: S.FRAG_DENOISE, controls: S.FRAG_COLOR_CONTROLS,
       dissolve: S.FRAG_DISSOLVE, finish: S.FRAG_FINISH, output: S.FRAG_OUTPUT, layer: S.FRAG_LAYER,
+      spot: S.FRAG_SPOT, maskBlend: S.FRAG_MASK_BLEND, hiExtract: S.FRAG_HIGHLIGHT_EXTRACT, glowComp: S.FRAG_GLOW_COMPOSITE,
     }
     for (const [k, src] of Object.entries(programs)) this.progs.set(k, this.compile(src))
   }
@@ -635,6 +644,149 @@ export class Renderer {
     this.draw(dst)
   }
 
+  private applySpots(img: Tex, spots: SpotPatch[], geo: RenderGeometry): Tex {
+    const gl = this.gl
+    const longSide = Math.max(geo.refWidth, geo.refHeight)
+    for (const spot of spots) {
+      if (spot.opacity <= 0) continue
+      const out = this.acquire(img.w, img.h)
+      const u = this.use('spot')
+      this.bindTex(0, img.tex)
+      gl.uniform1i(u('u_src'), 0)
+      gl.uniform2f(u('u_texSize'), img.w, img.h)
+      gl.uniform2f(u('u_origin'), geo.originX, geo.originY)
+      gl.uniform2f(u('u_refSize'), geo.refWidth, geo.refHeight)
+      gl.uniform2f(u('u_target'), spot.x, spot.y)
+      gl.uniform2f(u('u_source'), spot.sourceX, spot.sourceY)
+      gl.uniform1f(u('u_radius'), Math.max(2, spot.radius * longSide))
+      gl.uniform1f(u('u_feather'), CM.clamp(spot.feather))
+      gl.uniform1f(u('u_opacity'), CM.clamp(spot.opacity / 100))
+      this.draw(out)
+      this.release(img)
+      img = out
+    }
+    return img
+  }
+
+  private uploadBrushMask(mask: LayerMask, geo: RenderGeometry) {
+    const gl = this.gl
+    const w = geo.refWidth, h = geo.refHeight
+    const scale = Math.min(1, 900 / Math.max(w, h))
+    const bw = Math.max(16, Math.round(w * scale))
+    const bh = Math.max(16, Math.round(h * scale))
+    const canvas = new OffscreenCanvas(bw, bh)
+    const ctx = canvas.getContext('2d')!
+    ctx.fillStyle = '#000'
+    ctx.fillRect(0, 0, bw, bh)
+    const shortSide = Math.min(bw, bh)
+    if (mask.feather > 0) ctx.filter = `blur(${((mask.feather / 100) * Math.max(1, Math.max(bw, bh) * 0.01)).toFixed(1)}px)`
+    for (const stroke of mask.strokes) {
+      if (!stroke.points.length) continue
+      const diam = Math.max(3, stroke.size * shortSide)
+      const r = diam / 2
+      const val = stroke.erase ? 0 : 255
+      const hard = CM.clamp(stroke.hardness)
+      const step = Math.max(1.5, r * 0.35)
+      const stamp = (px: number, py: number) => {
+        const cx = px * bw, cy = py * bh
+        if (hard >= 0.95) {
+          ctx.fillStyle = `rgb(${val},${val},${val})`
+          ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill()
+        } else {
+          const g = ctx.createRadialGradient(cx, cy, r * hard * 0.85, cx, cy, r)
+          g.addColorStop(0, `rgba(${val},${val},${val},1)`)
+          g.addColorStop(1, `rgba(${val},${val},${val},0)`)
+          ctx.fillStyle = g
+          ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill()
+        }
+      }
+      if (stroke.points.length === 1) stamp(stroke.points[0].x, stroke.points[0].y)
+      else {
+        for (let i = 0; i < stroke.points.length - 1; i++) {
+          const a = stroke.points[i], b = stroke.points[i + 1]
+          const dist = Math.hypot((b.x - a.x) * bw, (b.y - a.y) * bh)
+          const count = Math.max(1, Math.ceil(dist / step))
+          for (let k = 0; k <= count; k++) {
+            const t = k / count
+            stamp(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
+          }
+        }
+      }
+    }
+    gl.bindTexture(gl.TEXTURE_2D, this.brushMaskTex)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas)
+  }
+
+  private applyMaskBlend(bg: Tex, fg: Tex, mask: LayerMask, geo: RenderGeometry): Tex {
+    const gl = this.gl
+    const kindMap: Record<MaskKind, number> = { none: 0, linear: 1, radial: 2, lumaRange: 3, colorRange: 4, brush: 5 }
+    if (mask.kind === 'brush') this.uploadBrushMask(mask, geo)
+    const out = this.acquire(bg.w, bg.h)
+    const u = this.use('maskBlend')
+    this.bindTex(0, bg.tex)
+    this.bindTex(1, fg.tex)
+    this.bindTex(2, this.brushMaskTex)
+    gl.uniform1i(u('u_bg'), 0)
+    gl.uniform1i(u('u_fg'), 1)
+    gl.uniform1i(u('u_maskTex'), 2)
+    gl.uniform1i(u('u_maskKind'), kindMap[mask.kind] ?? 0)
+    gl.uniform1i(u('u_invert'), mask.invert ? 1 : 0)
+    gl.uniform2f(u('u_texSize'), bg.w, bg.h)
+    gl.uniform2f(u('u_origin'), geo.originX, geo.originY)
+    gl.uniform2f(u('u_refSize'), geo.refWidth, geo.refHeight)
+    if (mask.kind === 'linear') {
+      gl.uniform4f(u('u_m0'), mask.startX, mask.startY, mask.endX, mask.endY)
+      gl.uniform4f(u('u_m1'), 0, 0, 0, 0)
+    } else if (mask.kind === 'radial') {
+      gl.uniform4f(u('u_m0'), mask.centerX, mask.centerY, mask.radiusX, mask.radiusY)
+      gl.uniform4f(u('u_m1'), CM.clamp(mask.softness / 100), 0, 0, 0)
+    } else if (mask.kind === 'lumaRange') {
+      gl.uniform4f(u('u_m0'), mask.lumaMin, mask.lumaMax, mask.lumaFalloff, 0)
+      gl.uniform4f(u('u_m1'), 0, 0, 0, 0)
+    } else if (mask.kind === 'colorRange') {
+      gl.uniform4f(u('u_m0'), mask.targetR, mask.targetG, mask.targetB, mask.colorTolerance)
+      gl.uniform4f(u('u_m1'), mask.colorSoftness, 0, 0, 0)
+    } else {
+      gl.uniform4f(u('u_m0'), 0, 0, 0, 0)
+      gl.uniform4f(u('u_m1'), 0, 0, 0, 0)
+    }
+    this.draw(out)
+    this.release(bg)
+    this.release(fg)
+    return out
+  }
+
+  private applyGlow(img: Tex, amount: number, longSide: number, halation: boolean): Tex {
+    const gl = this.gl
+    const ext = this.acquire(img.w, img.h)
+    {
+      const u = this.use('hiExtract')
+      this.bindTex(0, img.tex)
+      gl.uniform1i(u('u_src'), 0)
+      gl.uniform1f(u('u_thresh'), halation ? 0.76 : 0.62)
+      if (halation) gl.uniform3f(u('u_rgbScale'), 1.0, 0.7, 0.2)
+      else gl.uniform3f(u('u_rgbScale'), 1.0, 1.0, 1.0)
+      this.draw(ext)
+    }
+    const radius = halation ? Math.max(5, longSide * 0.018) : Math.max(4, longSide * 0.022)
+    const glow = this.blur(ext, radius)
+    const out = this.acquire(img.w, img.h)
+    {
+      const u = this.use('glowComp')
+      this.bindTex(0, img.tex)
+      this.bindTex(1, glow.tex)
+      gl.uniform1i(u('u_src'), 0)
+      gl.uniform1i(u('u_glow'), 1)
+      gl.uniform1i(u('u_mode'), halation ? 1 : 0)
+      if (halation) gl.uniform3f(u('u_rgbScale'), amount * 1.35, amount * 0.42, amount * 0.10)
+      else gl.uniform3f(u('u_rgbScale'), amount * 1.15, amount * 1.15, amount * 1.15)
+      this.draw(out)
+    }
+    this.release(glow)
+    this.release(img)
+    return out
+  }
+
   // MARK: 主管线
 
   /** 跑完整条管线，返回线性浮点纹理（调用方负责 release） */
@@ -645,7 +797,7 @@ export class Renderer {
     // 只处理源纹理的一块（放大时的局部、导出时的分块）
     const r = geo.srcRect ?? { x: 0, y: 0, w: src.width, h: src.height }
 
-    // 1–2. 曝光、白平衡
+    // 0–2. 曝光、白平衡（以及污点修复）
     let img = this.acquire(r.w, r.h)
     {
       const u = this.use('input')
@@ -657,6 +809,7 @@ export class Renderer {
       gl.uniform3f(u('u_gains'), g[0], g[1], g[2])
       this.draw(img)
     }
+    if (state.spots?.length) img = this.applySpots(img, state.spots, geo)
 
     // 3. 高光（压暗部分）与阴影
     if (b.highlights < 0 || b.shadows !== 0) {
@@ -682,19 +835,32 @@ export class Renderer {
     }
     if (b.sharpen > 0) img = this.unsharp(img, 1.69 * Math.max(1, longSide / 2200), (b.sharpen / 100) * 1.6, true)
 
-    // 6. 图层栈：连续的逐像素图层一段段计算，遇到空间类图层就先结算再处理它
+    // 6. 图层栈：连续的逐像素图层一段段计算，遇到空间类或带蒙版的图层就先结算再处理它
     let tone: BasicSettings | null = b
     let pending: AdjustmentLayer[] = []
     for (const layer of state.layers) {
       if (!layer.visible || layer.opacity <= 0) continue
-      if (isSpatial(layer.kind)) {
+      if (isSpatial(layer.kind) || maskIsActive(layer.mask)) {
         img = this.pixelSegment(img, tone, pending)
         tone = null
         pending = []
-        img = this.spatial(img, layer, longSide)
+        if (maskIsActive(layer.mask)) {
+          const before = this.acquire(img.w, img.h)
+          this.copyInto(img, before)
+          let adjusted = isSpatial(layer.kind)
+            ? this.spatial(img, layer, longSide)
+            : this.pixelSegment(img, null, [layer])
+          img = this.applyMaskBlend(before, adjusted, layer.mask, geo)
+        } else {
+          img = this.spatial(img, layer, longSide)
+        }
       } else pending.push(layer)
     }
     img = this.pixelSegment(img, tone, pending)
+
+    // 7. Bloom（高光柔光）& Halation（胶片红橙光晕）
+    if (b.bloom > 0) img = this.applyGlow(img, b.bloom / 100, longSide, false)
+    if (b.halation > 0) img = this.applyGlow(img, b.halation / 100, longSide, true)
 
     // 7–8. 暗角、颗粒
     if (b.vignette !== 0 || b.grain > 0) {

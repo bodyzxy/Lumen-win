@@ -1,4 +1,4 @@
-import { CSSProperties, ReactNode, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { CSSProperties, ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ease, spring, springTransition, tween } from '../anim'
 import { Histogram } from '../engine/analysis'
 import { CM, gray, muted } from '../engine/colormath'
@@ -613,13 +613,19 @@ export function histPath(v: number[], w: number, h: number, filled: boolean) {
 }
 
 export function HistogramPanel({ histogram }: { histogram: Histogram | null }) {
-  const [showRGB, setShowRGB] = useState(false)
+  const [scopeMode, setScopeMode] = useState(0) // 0: Luma, 1: RGB, 2: Waveform, 3: Vectorscope
   const [ref, { width }] = useSize<HTMLDivElement>()
   const luma = useAnimatedArray(histogram?.luma ?? null)
   const red = useAnimatedArray(histogram?.red ?? null)
   const green = useAnimatedArray(histogram?.green ?? null)
   const blue = useAnimatedArray(histogram?.blue ?? null)
-  const H = 78
+  const H = 82
+  const scopeTitle = [
+    L('直方图', 'Histogram'),
+    L('RGB 直方图', 'RGB Histogram'),
+    L('RGB 波形图', 'RGB Waveform'),
+    L('矢量示波器', 'Vectorscope'),
+  ][scopeMode]
   const clip = (title: string, v: number) => {
     const warn = v > 0.003
     return (
@@ -634,31 +640,42 @@ export function HistogramPanel({ histogram }: { histogram: Histogram | null }) {
   return (
     <div style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <span style={{ fontSize: 11.5, fontWeight: 500, color: 'var(--text2)' }}>{L('直方图', 'Histogram')}</span>
+        <span style={{ fontSize: 11.5, fontWeight: 500, color: 'var(--text2)' }}>{scopeTitle}</span>
         <HelpBadge k="histogram" />
         <span style={{ flex: 1 }} />
-        <InkSegment items={[[false, L('亮度', 'Luma')], [true, 'RGB']]} selection={showRGB} onSelect={setShowRGB} style={{ width: 96 }} />
+        <InkSegment
+          items={[[0, L('亮', 'L')], [1, 'RGB'], [2, L('波', 'WF')], [3, L('矢', 'VS')]]}
+          selection={scopeMode}
+          onSelect={setScopeMode}
+          style={{ width: 152 }}
+        />
       </div>
       <div ref={ref} style={{ position: 'relative', height: H, boxShadow: 'inset 0 0 0 0.5px var(--line)' }}>
-        {[1, 2, 3].map((i) => (
+        {scopeMode !== 3 && [1, 2, 3].map((i) => (
           <div key={i} style={{ position: 'absolute', top: 0, bottom: 0, left: `${i * 25}%`, width: 0.5, background: 'var(--line)' }} />
         ))}
         {histogram && luma ? (
-          <svg width={width} height={H} style={{ position: 'absolute', inset: 0 }}>
-            <defs>
-              <linearGradient id="hgrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stopColor="rgba(29,29,31,0.22)" />
-                <stop offset="1" stopColor="rgba(29,29,31,0.08)" />
-              </linearGradient>
-            </defs>
-            <g style={{ opacity: showRGB ? 1 : 0, transition: 'opacity 0.35s ease-out', mixBlendMode: 'multiply' }}>
-              {red && <path d={histPath(red, width, H, true)} fill="rgba(217,89,82,0.28)" style={{ mixBlendMode: 'multiply' }} />}
-              {green && <path d={histPath(green, width, H, true)} fill="rgba(82,179,107,0.28)" style={{ mixBlendMode: 'multiply' }} />}
-              {blue && <path d={histPath(blue, width, H, true)} fill="rgba(82,115,217,0.28)" style={{ mixBlendMode: 'multiply' }} />}
-            </g>
-            <path d={histPath(luma, width, H, true)} fill="url(#hgrad)" style={{ opacity: showRGB ? 0 : 1, transition: 'opacity 0.35s ease-out' }} />
-            <path d={histPath(luma, width, H, false)} fill="none" stroke="rgba(29,29,31,0.7)" strokeWidth={1} />
-          </svg>
+          scopeMode === 2 ? (
+            <WaveformCanvas h={histogram} width={width} height={H} />
+          ) : scopeMode === 3 ? (
+            <VectorscopeCanvas h={histogram} width={width} height={H} />
+          ) : (
+            <svg width={width} height={H} style={{ position: 'absolute', inset: 0 }}>
+              <defs>
+                <linearGradient id="hgrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stopColor="rgba(29,29,31,0.22)" />
+                  <stop offset="1" stopColor="rgba(29,29,31,0.08)" />
+                </linearGradient>
+              </defs>
+              <g style={{ opacity: scopeMode === 1 ? 1 : 0, transition: 'opacity 0.35s ease-out', mixBlendMode: 'multiply' }}>
+                {red && <path d={histPath(red, width, H, true)} fill="rgba(217,89,82,0.28)" style={{ mixBlendMode: 'multiply' }} />}
+                {green && <path d={histPath(green, width, H, true)} fill="rgba(82,179,107,0.28)" style={{ mixBlendMode: 'multiply' }} />}
+                {blue && <path d={histPath(blue, width, H, true)} fill="rgba(82,115,217,0.28)" style={{ mixBlendMode: 'multiply' }} />}
+              </g>
+              <path d={histPath(luma, width, H, true)} fill="url(#hgrad)" style={{ opacity: scopeMode === 1 ? 0 : 1, transition: 'opacity 0.35s ease-out' }} />
+              <path d={histPath(luma, width, H, false)} fill="none" stroke="rgba(29,29,31,0.7)" strokeWidth={1} />
+            </svg>
+          )
         ) : (
           <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', fontSize: 11, color: 'var(--text3)' }}>
             {L('打开照片后显示', 'Appears when a photo is open')}
@@ -754,3 +771,84 @@ export const Hint = {
 }
 
 export { ease }
+
+function WaveformCanvas({ h, width, height }: { h: Histogram; width: number; height: number }) {
+  const ref = useRef<HTMLCanvasElement>(null)
+  useEffect(() => {
+    const c = ref.current
+    if (!c || width <= 0 || height <= 0) return
+    const dpr = window.devicePixelRatio || 1
+    c.width = Math.round(width * dpr)
+    c.height = Math.round(height * dpr)
+    const ctx = c.getContext('2d')!
+    ctx.scale(dpr, dpr)
+    ctx.clearRect(0, 0, width, height)
+    const wCols = 64, wRows = 32
+    const bandW = width / 3, colW = bandW / wCols, rowH = height / wRows
+    const channels: [number[], string][] = [
+      [h.waveformR, '230,71,64'],
+      [h.waveformG, '64,184,97'],
+      [h.waveformB, '71,122,235'],
+    ]
+    channels.forEach(([grid, rgb], idx) => {
+      if (grid.length !== wCols * wRows) return
+      const x0 = idx * bandW
+      for (let col = 0; col < wCols; col++) {
+        for (let row = 0; row < wRows; row++) {
+          const v = grid[col * wRows + row]
+          if (v < 0.04) continue
+          ctx.fillStyle = `rgba(${rgb},${(v * 0.95).toFixed(2)})`
+          ctx.fillRect(x0 + col * colW, height - (row + 1) * rowH, Math.max(1, colW), Math.max(1, rowH))
+        }
+      }
+    })
+  }, [h, width, height])
+  return <canvas ref={ref} style={{ position: 'absolute', inset: 0, width, height, background: 'rgba(0,0,0,0.03)' }} />
+}
+
+function VectorscopeCanvas({ h, width, height }: { h: Histogram; width: number; height: number }) {
+  const ref = useRef<HTMLCanvasElement>(null)
+  useEffect(() => {
+    const c = ref.current
+    if (!c || width <= 0 || height <= 0) return
+    const dpr = window.devicePixelRatio || 1
+    c.width = Math.round(width * dpr)
+    c.height = Math.round(height * dpr)
+    const ctx = c.getContext('2d')!
+    ctx.scale(dpr, dpr)
+    ctx.clearRect(0, 0, width, height)
+    const cx = width / 2, cy = height / 2, rad = Math.max(8, Math.min(cx, cy) - 4)
+    ctx.strokeStyle = 'rgba(0,0,0,0.2)'
+    ctx.lineWidth = 0.7
+    ctx.beginPath(); ctx.arc(cx, cy, rad, 0, Math.PI * 2); ctx.stroke()
+    ctx.strokeStyle = 'rgba(0,0,0,0.1)'
+    ctx.beginPath()
+    ctx.moveTo(cx - rad, cy); ctx.lineTo(cx + rad, cy)
+    ctx.moveTo(cx, cy - rad); ctx.lineTo(cx, cy + rad)
+    ctx.stroke()
+    // 肤色参考线（I-line，123°）
+    const skinAngle = (-123 * Math.PI) / 180
+    ctx.save()
+    ctx.strokeStyle = 'rgba(217,140,89,0.75)'
+    ctx.lineWidth = 1
+    ctx.setLineDash([3, 2])
+    ctx.beginPath()
+    ctx.moveTo(cx, cy)
+    ctx.lineTo(cx + rad * Math.cos(skinAngle), cy + rad * Math.sin(skinAngle))
+    ctx.stroke()
+    ctx.restore()
+    const vSize = 48
+    if (h.vectorscope.length !== vSize * vSize) return
+    const box = (rad * 2) / vSize
+    for (let vy = 0; vy < vSize; vy++) {
+      for (let vx = 0; vx < vSize; vx++) {
+        const v = h.vectorscope[vy * vSize + vx]
+        if (v < 0.04) continue
+        const [r, g, b] = CM.fromYCbCr(0.55, vx / vSize - 0.5, 0.5 - vy / vSize)
+        ctx.fillStyle = `rgba(${Math.round(CM.clamp(r) * 255)},${Math.round(CM.clamp(g) * 255)},${Math.round(CM.clamp(b) * 255)},${v.toFixed(2)})`
+        ctx.fillRect(cx - rad + vx * box, cy - rad + vy * box, Math.max(1.5, box), Math.max(1.5, box))
+      }
+    }
+  }, [h, width, height])
+  return <canvas ref={ref} style={{ position: 'absolute', inset: 0, width, height }} />
+}

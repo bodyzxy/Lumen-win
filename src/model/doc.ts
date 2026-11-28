@@ -2,6 +2,7 @@ import { useRef, useSyncExternalStore } from 'react'
 import { Spring, spring } from '../anim'
 import { colorStatsOf, downscale, Histogram, histogramOf, sampleColor } from '../engine/analysis'
 import { cropCanvas, cropPixels16 } from '../engine/crop'
+import { addExifFrame, parseExif } from '../engine/exif'
 import { neutralizingWhiteBalance, parseCube, writeCube } from '../engine/colormath'
 import { Renderer, Source } from '../engine/renderer'
 import { L } from '../i18n'
@@ -15,12 +16,17 @@ import {
 export type CompareMode = 'off' | 'split'
 
 /** 吸管取色的用途 */
-export type Eyedropper = { kind: 'whiteBalance' } | { kind: 'replaceColor'; layerID: string }
+export type Eyedropper =
+  | { kind: 'whiteBalance' }
+  | { kind: 'replaceColor'; layerID: string }
+  | { kind: 'colorRangeMask'; layerID: string }
 
 export const eyedropperHint = (e: Eyedropper) =>
   e.kind === 'whiteBalance'
     ? L('点击照片里本该是白色或灰色的地方', 'Click something in the photo that should be white or gray')
-    : L('点击要替换的颜色', 'Click the color you want to replace')
+    : e.kind === 'colorRangeMask'
+      ? L('点击要制作色彩范围蒙版的颜色', 'Click a color for the Color Range mask')
+      : L('点击要替换的颜色', 'Click the color you want to replace')
 
 export type ApplyBanner =
   | { kind: 'offer'; sourceID: string; name: string; summary: string }
@@ -133,6 +139,11 @@ export class EditDocument {
   showSidebar = true
   activeBasicTab = 0
   isCropping = false
+  isSpotHealing = false
+  spotBrushRadius = 0.025
+  maskBrushErase = false
+  maskBrushSize = 0.06
+  maskBrushHardness = 0.5
   eyedropper: Eyedropper | null = null
   dropHover = false
   /** 显示“正在加载”时的提示 */
@@ -867,7 +878,14 @@ export class EditDocument {
       }
     } else if (this.previewImage) {
       const target = sampleColor(this.previewImage, px, py)
-      this.updateLayer(mode.layerID, (l) => ({ ...l, params: { ...l.params, replaceColor: { ...l.params.replaceColor, target } } }))
+      if (mode.kind === 'colorRangeMask') {
+        this.updateLayer(mode.layerID, (l) => ({
+          ...l,
+          mask: { ...l.mask, targetR: target.r, targetG: target.g, targetB: target.b },
+        }))
+      } else {
+        this.updateLayer(mode.layerID, (l) => ({ ...l, params: { ...l.params, replaceColor: { ...l.params.replaceColor, target } } }))
+      }
     }
     this.eyedropper = null
     this.emit()
@@ -1058,17 +1076,17 @@ export class EditDocument {
 
   // MARK: - 导出
 
-  async export(format: ExportFormat, quality: number, maxSide: number | null) {
+  async export(format: ExportFormat, quality: number, maxSide: number | null, includeExifFrame = false) {
     const s = this.active
     const r = this.renderer
     if (!s || !r) return
     const ext = formatExt[format]
     const path = await P.pickSavePath(`${this.fileName}-Lumen.${ext}`, ext, L('导出照片', 'Export Photo'))
     if (!path) return
-    await this.exportToPath(path, format, quality, maxSide)
+    await this.exportToPath(path, format, quality, maxSide, includeExifFrame)
   }
 
-  async exportToPath(path: string, format: ExportFormat, quality: number, maxSide: number | null): Promise<void> {
+  async exportToPath(path: string, format: ExportFormat, quality: number, maxSide: number | null, includeExifFrame = false): Promise<void> {
     const s = this.active
     if (!s || !this.renderer) throw new Error('No photo open')
     this.isExporting = true
@@ -1077,7 +1095,7 @@ export class EditDocument {
     let message = L('已导出', 'Exported')
     await new Promise((res) => setTimeout(res, 60))
     try {
-      await this.exportSessionToPath(s, path, this.state, format, quality, maxSide)
+      await this.exportSessionToPath(s, path, this.state, format, quality, maxSide, includeExifFrame)
     } catch (e: any) {
       console.error(e)
       message = L(`导出失败：${e?.message ?? e}`, `Export failed: ${e?.message ?? e}`)
@@ -1086,15 +1104,15 @@ export class EditDocument {
     this.showToast(message)
   }
 
-  async exportAll(format: ExportFormat, quality: number, maxSide: number | null) {
+  async exportAll(format: ExportFormat, quality: number, maxSide: number | null, includeExifFrame = false) {
     if (!this.sessions.length) return
     const dir = await P.pickDirectory(L('选择批量导出文件夹', 'Choose Batch Export Folder'))
     if (!dir) return
     this.showExportSheet = false
-    await this.exportAllToDirectory(dir, format, quality, maxSide)
+    await this.exportAllToDirectory(dir, format, quality, maxSide, includeExifFrame)
   }
 
-  async exportAllToDirectory(dir: string, format: ExportFormat, quality: number, maxSide: number | null): Promise<string[]> {
+  async exportAllToDirectory(dir: string, format: ExportFormat, quality: number, maxSide: number | null, includeExifFrame = false): Promise<string[]> {
     if (!this.sessions.length || !this.renderer) throw new Error('No photo open')
     this.stashActive()
     this.isExporting = true
@@ -1118,7 +1136,7 @@ export class EditDocument {
         }
         usedNames.add(candidate)
         const dest = `${cleanDir}${sep}${candidate}`
-        await this.exportSessionToPath(s, dest, s.state, format, quality, maxSide)
+        await this.exportSessionToPath(s, dest, s.state, format, quality, maxSide, includeExifFrame)
         files.push(dest)
       }
       this.showToast(L(`已批量导出 ${files.length} 张照片`, `Batch exported ${files.length} photos`))
@@ -1139,6 +1157,7 @@ export class EditDocument {
     format: ExportFormat,
     quality: number,
     maxSide: number | null,
+    includeExifFrame = false,
   ): Promise<void> {
     const r = this.renderer!
     const limit = Math.min(maxSide ?? Infinity, r.maxTextureSize)
@@ -1172,7 +1191,10 @@ export class EditDocument {
     } else {
       const canvas = new OffscreenCanvas(W, H)
       canvas.getContext('2d')!.putImageData(new ImageData(out as Uint8ClampedArray<ArrayBuffer>, W, H), 0, 0)
-      const finalCanvas = cropIsIdentity(snapshot.crop) ? canvas : cropCanvas(canvas, snapshot.crop)
+      let finalCanvas = cropIsIdentity(snapshot.crop) ? canvas : cropCanvas(canvas, snapshot.crop)
+      if (includeExifFrame) {
+        finalCanvas = addExifFrame(finalCanvas, parseExif(s.bytes))
+      }
       const type = format === 'JPEG' ? 'image/jpeg' : format === 'WEBP' ? 'image/webp' : 'image/png'
       const blob = await finalCanvas.convertToBlob({ type, quality })
       await P.writeBytes(path, new Uint8Array(await blob.arrayBuffer()))

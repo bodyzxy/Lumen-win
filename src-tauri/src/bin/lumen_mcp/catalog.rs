@@ -56,7 +56,7 @@ pub fn tools() -> Vec<Value> {
             json!({
                 "params": {
                     "type": "object",
-                    "description": "Subset of BasicSettings: exposure (-5..5), contrast (-100..100), highlights (-100..100), shadows (-100..100), whites (-100..100), blacks (-100..100), temperature (-100..100), tint (-100..100), vibrance (-100..100), saturation (-100..100), texture (-100..100), clarity (-100..100), dehaze (-100..100), sharpen (0..100), noiseReduction (0..100), vignette (-100..100), grain (0..100), grainSize (0..100), shadowTint (-100..100), redHue/redSaturation/greenHue/greenSaturation/blueHue/blueSaturation (-100..100)."
+                    "description": "Subset of BasicSettings: exposure (-5..5), contrast (-100..100), highlights (-100..100), shadows (-100..100), whites (-100..100), blacks (-100..100), temperature (-100..100), tint (-100..100), vibrance (-100..100), saturation (-100..100), texture (-100..100), clarity (-100..100), dehaze (-100..100), sharpen (0..100), noiseReduction (0..100), vignette (-100..100), grain (0..100), grainSize (0..100), halation (0..100), bloom (0..100), shadowTint (-100..100), redHue/redSaturation/greenHue/greenSaturation/blueHue/blueSaturation (-100..100)."
                 },
                 "reset_others": { "type": "boolean", "description": "If true, resets all other basic fields to default before applying params." }
             }),
@@ -114,6 +114,35 @@ pub fn tools() -> Vec<Value> {
                 "params": { "type": "object", "description": "Partial parameter patch for this layer." }
             }),
             &["layer_id"],
+        ),
+        tool(
+            "set_layer_mask",
+            "Attach or update a parametric/manual mask on an adjustment layer: linear gradient, radial gradient, lumaRange, colorRange, or brush.",
+            json!({
+                "layer_id": { "type": "string", "description": "UUID of the layer." },
+                "kind": { "type": "string", "enum": ["none", "linear", "radial", "lumaRange", "colorRange", "brush"], "description": "Mask type." },
+                "invert": { "type": "boolean" },
+                "feather": { "type": "number", "description": "Edge feather 0...100." },
+                "start_x": { "type": "number" }, "start_y": { "type": "number" },
+                "end_x": { "type": "number" }, "end_y": { "type": "number" },
+                "center_x": { "type": "number" }, "center_y": { "type": "number" },
+                "radius_x": { "type": "number" }, "radius_y": { "type": "number" },
+                "softness": { "type": "number", "description": "Radial softness 0...100." },
+                "luma_min": { "type": "number" }, "luma_max": { "type": "number" }, "luma_falloff": { "type": "number" },
+                "target_r": { "type": "number" }, "target_g": { "type": "number" }, "target_b": { "type": "number" },
+                "color_tolerance": { "type": "number" }, "color_softness": { "type": "number" }
+            }),
+            &["layer_id", "kind"],
+        ),
+        tool(
+            "add_spot_patch",
+            "Heal or clone a dust spot / blemish at normalized (x, y) by sampling from (source_x, source_y).",
+            json!({
+                "x": { "type": "number" }, "y": { "type": "number" },
+                "radius": { "type": "number", "description": "Normalized radius (default 0.025)." },
+                "source_x": { "type": "number" }, "source_y": { "type": "number" }
+            }),
+            &["x", "y"],
         ),
         tool(
             "layer_action",
@@ -212,7 +241,8 @@ pub fn tools() -> Vec<Value> {
                 "output_path": { "type": "string", "description": "Destination file path." },
                 "format": { "type": "string", "enum": ["jpeg", "png", "webp", "tiff"], "description": "Export format (default jpeg)." },
                 "quality": { "type": "number", "description": "Compression quality 0.5...1.0 for JPEG/WebP (default 0.92)." },
-                "max_side": { "type": "number", "description": "Optional max long edge in pixels; omit for original full size." }
+                "max_side": { "type": "number", "description": "Optional max long edge in pixels; omit for original full size." },
+                "exif_frame": { "type": "boolean", "description": "Include white gallery border with EXIF metadata watermark." }
             }),
             &["output_path"],
         ),
@@ -228,6 +258,8 @@ pub fn tools() -> Vec<Value> {
                 "quarter_turns": { "type": "integer", "description": "90-degree clockwise turns (0..3)." },
                 "flip_h": { "type": "boolean" },
                 "flip_v": { "type": "boolean" },
+                "perspective_v": { "type": "number", "description": "Vertical keystone correction (-45...45)." },
+                "perspective_h": { "type": "number", "description": "Horizontal keystone correction (-45...45)." },
                 "reset": { "type": "boolean", "description": "Reset crop & transform to original." }
             }),
             &[],
@@ -239,7 +271,8 @@ pub fn tools() -> Vec<Value> {
                 "output_dir": { "type": "string", "description": "Destination directory path." },
                 "format": { "type": "string", "enum": ["jpeg", "png", "webp", "tiff"], "description": "Export format (default jpeg)." },
                 "quality": { "type": "number", "description": "Compression quality 0.5...1.0 (default 0.92)." },
-                "max_side": { "type": "number", "description": "Optional max long edge in pixels; omit for original full size." }
+                "max_side": { "type": "number", "description": "Optional max long edge in pixels; omit for original full size." },
+                "exif_frame": { "type": "boolean", "description": "Include white gallery border with EXIF metadata watermark." }
             }),
             &["output_dir"],
         ),

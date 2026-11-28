@@ -25,6 +25,12 @@ export function cropCanvas(src: ImageBitmap | OffscreenCanvas, crop: CropSetting
   const w0 = src.width
   const h0 = src.height
   const { turns, rad, iw, ih, cx, cy, outW, outH } = cropGeometry(w0, h0, crop)
+  let work: ImageBitmap | OffscreenCanvas = src
+  if (Math.abs(crop.perspectiveV ?? 0) >= 0.1 || Math.abs(crop.perspectiveH ?? 0) >= 0.1) {
+    const tmp = new OffscreenCanvas(w0, h0)
+    tmp.getContext('2d')!.drawImage(src, 0, 0)
+    work = applyPerspectiveCanvas(tmp, crop.perspectiveV ?? 0, crop.perspectiveH ?? 0)
+  }
   const canvas = new OffscreenCanvas(outW, outH)
   const ctx = canvas.getContext('2d')!
   ctx.imageSmoothingEnabled = true
@@ -33,8 +39,43 @@ export function cropCanvas(src: ImageBitmap | OffscreenCanvas, crop: CropSetting
   if (Math.abs(rad) >= 1e-5) ctx.rotate(rad)
   ctx.scale(crop.flipH ? -1 : 1, crop.flipV ? -1 : 1)
   if (turns !== 0) ctx.rotate((turns * Math.PI) / 2)
-  ctx.drawImage(src, -w0 / 2, -h0 / 2)
+  ctx.drawImage(work, -w0 / 2, -h0 / 2)
   return canvas
+}
+
+function applyPerspectiveCanvas(src: OffscreenCanvas, pv: number, ph: number): OffscreenCanvas {
+  const w = src.width, h = src.height
+  const sCtx = src.getContext('2d')!
+  const sData = sCtx.getImageData(0, 0, w, h).data
+  const out = new OffscreenCanvas(w, h)
+  const dCtx = out.getContext('2d')!
+  const dImg = dCtx.createImageData(w, h)
+  const dData = dImg.data
+  const kv = (pv / 100) * 0.45
+  const kh = (ph / 100) * 0.45
+  for (let y = 0; y < h; y++) {
+    const ny = (y / Math.max(1, h - 1)) * 2 - 1
+    const sxScale = 1 / Math.max(0.35, 1 + kv * ny)
+    for (let x = 0; x < w; x++) {
+      const nx = (x / Math.max(1, w - 1)) * 2 - 1
+      const syScale = 1 / Math.max(0.35, 1 + kh * nx)
+      const sx = ((nx * sxScale + 1) * 0.5) * (w - 1)
+      const sy = ((ny * syScale + 1) * 0.5) * (h - 1)
+      const di = (y * w + x) * 4
+      if (sx < 0 || sx >= w - 1 || sy < 0 || sy >= h - 1) {
+        dData[di + 3] = 255
+        continue
+      }
+      const x0 = sx | 0, y0 = sy | 0
+      const si = (y0 * w + x0) * 4
+      dData[di] = sData[si]
+      dData[di + 1] = sData[si + 1]
+      dData[di + 2] = sData[si + 2]
+      dData[di + 3] = 255
+    }
+  }
+  dCtx.putImageData(dImg, 0, 0)
+  return out
 }
 
 export function cropPixels16(
