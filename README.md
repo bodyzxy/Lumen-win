@@ -94,6 +94,46 @@ src/
 src-tauri/     Rust: file I/O, TIFF decode/encode, window, installer config
 ```
 
+### Live MCP Automation (`lumen_mcp.exe`)
+
+Lumen Windows includes a built-in **Model Context Protocol (MCP)** stdio server (`lumen_mcp.exe`) so AI assistants (**Cursor, Claude Desktop, Claude Code, Codex, Antigravity**) can control the live Lumen window and render edits in real time.
+
+* **Why is `lumen_mcp.exe` included in the installer?**
+  Lumen is a purely local desktop photo editor (all WebGL grading runs locally inside `lumen.exe` with no cloud server). `lumen_mcp.exe` acts as a lightweight local bridge between your AI client and `lumen.exe`—no Node.js, Python, or online package downloads required. If `lumen.exe` is not running when a tool is called, `lumen_mcp.exe` launches it automatically.
+
+#### 1. Locate `lumen_mcp.exe`
+
+* **Installed via installer** (placed alongside `Lumen.exe`):
+  * NSIS installer (`*-setup.exe`, current user): `%LOCALAPPDATA%\Lumen\lumen_mcp.exe` (`C:\Users\<YourName>\AppData\Local\Lumen\lumen_mcp.exe`)
+  * MSI installer: `C:\Program Files\Lumen\lumen_mcp.exe`
+* **Built from source**:
+  ```powershell
+  cd src-tauri
+  cargo build --release --bin lumen --bin lumen_mcp
+  ```
+  Outputs are in `src-tauri/target/release/`.
+
+#### 2. Configure in Your MCP Client
+
+Add the following to your Cursor / Claude Desktop / Codex / Antigravity MCP config (replace `<YourName>` with your Windows username):
+
+```json
+{
+  "mcpServers": {
+    "lumen": {
+      "command": "C:\\Users\\<YourName>\\AppData\\Local\\Lumen\\lumen_mcp.exe"
+    }
+  }
+}
+```
+
+#### 3. Available Tools (21)
+
+- **Sessions**: `open_photos`, `list_sessions`, `switch_session`, `close_session`
+- **Adjustments & Layers**: `get_edit_state`, `set_basic_adjustments`, `reset_adjustments`, `add_layer`, `update_layer`, `layer_action`, `apply_preset`, `sync_adjustments`, `undo`, `redo`
+- **View & Analysis**: `set_view`, `get_image_analysis`, `sample_color`, `auto_white_balance`
+- **Render & Export**: `render_preview`, `export_photo`, `export_lut`
+
 ---
 
 ## 简体中文
